@@ -1,4 +1,4 @@
-# jasperreports
+# jasperreports (lite)
 
 [![npm version](https://img.shields.io/npm/v/jasperreports.svg)](https://www.npmjs.com/package/jasperreports)
 [![CI](https://github.com/Brand-Boosting-GmbH/jasperreports/actions/workflows/ci.yml/badge.svg)](https://github.com/Brand-Boosting-GmbH/jasperreports/actions/workflows/ci.yml)
