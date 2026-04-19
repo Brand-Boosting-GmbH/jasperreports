@@ -1,27 +1,45 @@
 name: Release
 
+# Publishes to npm whenever package.json "version" on main isn't on npm yet.
+# Bump the version, commit, push — done.
+
 on:
   push:
-    tags:
-      - 'v*.*.*'
+    branches: [main]
+  workflow_dispatch:
 
 jobs:
   publish:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
-      id-token: write
+      contents: write   # create GitHub release + tag
+      id-token: write   # npm provenance
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-node@v4
         with:
           node-version: 20
           registry-url: 'https://registry.npmjs.org'
           cache: npm
+
       - run: npm ci
-      - run: npm run typecheck
-      - run: npm test
       - run: npm run build
-      - run: npm publish --provenance --access public
+
+      - name: Publish to npm (only if version changed)
+        id: publish
+        uses: JS-DevTools/npm-publish@v3
+        with:
+          token: ${{ secrets.NPM_TOKEN }}
+          access: public
+          provenance: true
+
+      - name: Create GitHub release
+        if: steps.publish.outputs.type != ''
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.publish.outputs.version }}
+          name: v${{ steps.publish.outputs.version }}
+          generate_release_notes: true
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

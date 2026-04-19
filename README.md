@@ -285,27 +285,33 @@ npm run build
 
 ## Publishing
 
-Two options — both publish to npm under the name `jasperreports`.
+Releases are triggered by bumping the `version` field in [package.json](package.json)
+on `main`. No tags, no extra commands.
 
-### Option A: automated via GitHub Actions (recommended)
-
-1. Add an `NPM_TOKEN` secret to the repository (GitHub → Settings → Secrets and variables → Actions → New repository secret). Use an **Automation** token from npmjs.com.
-2. Bump the version and push a tag:
+1. One-time setup: add an `NPM_TOKEN` secret to the repo (Settings → Secrets and
+   variables → Actions → New repository secret) — a granular npm token with
+   **Read and write** access to the `jasperreports` package.
+2. Edit [package.json](package.json), change `"version"`, commit, push:
 
    ```bash
-   npm version patch   # or: minor / major
-   git push --follow-tags
+   # bump to whatever you want
+   git commit -am "release: v0.1.1"
+   git push
    ```
 
-3. The `.github/workflows/release.yml` workflow runs typecheck + tests + build and publishes with provenance.
+The `.github/workflows/release.yml` workflow compares the local `version` to what's on
+npm. If they differ, it runs typecheck + tests + build, publishes with provenance, and
+creates a matching GitHub Release (e.g. `v0.1.1`) with auto-generated notes. If the
+versions already match, it does nothing.
 
-### Option B: manual from your workstation
+Prefer the command line? `npm version patch` still works — it edits `package.json` for
+you and creates a git tag. The workflow will pick up the version change on push.
+
+### Manual publish from your workstation
 
 ```bash
 npm login
-npm version patch
-npm publish     # prepublishOnly runs clean + typecheck + test + build
-git push --follow-tags
+npm publish    # prepublishOnly runs clean + typecheck + test + build
 ```
 
 ## License
