@@ -11,5 +11,5 @@ export default defineConfig({
   target: 'es2020',
   outDir: 'dist',
   treeshake: true,
-  external: ['pdf-lib'],
+  external: ['pdf-lib', 'fast-xml-parser'],
 });

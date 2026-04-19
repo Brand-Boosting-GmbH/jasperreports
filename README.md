@@ -26,7 +26,7 @@ services. `jasperreports` renders a practical subset of JRXML natively in JavaSc
 | Bundle size | ~27 KB + pdf-lib | hundreds of MB + JVM | ~200 MB |
 | Cloudflare Workers | ✅ | ❌ | ❌ |
 | Cold start | milliseconds | seconds | seconds |
-| Dependencies | `pdf-lib` | JVM | Chromium |
+| Dependencies | `pdf-lib`, `fast-xml-parser` | JVM | Chromium |
 | JRXML coverage | subset (see below) | 100% | N/A |
 
 ## Install
@@ -259,8 +259,10 @@ A full Worker example lives in [examples/cloudflare-worker.ts](examples/cloudfla
 
 ## Design notes
 
-- **No DOMParser.** Cloudflare Workers do not ship `DOMParser`, so this library
-  includes a tiny purpose-built XML parser in [src/xml-parser.ts](src/xml-parser.ts).
+- **No DOMParser.** Cloudflare Workers do not ship `DOMParser`, so XML parsing is
+  handled by [`fast-xml-parser`](https://github.com/NaturalIntelligence/fast-xml-parser)
+  via a tiny adapter in [src/xml-parser.ts](src/xml-parser.ts) that preserves the
+  existing `XMLElement` shape used by the rest of the parser.
 - **`pdf-lib` over Puppeteer.** ~200 KB versus ~200 MB, and it actually runs on the edge.
 - **Pluggable image resolution.** Images are not embedded in the JRXML; you pass an async
   resolver that can pull bytes from URLs, KV, R2, the filesystem, base64, etc.

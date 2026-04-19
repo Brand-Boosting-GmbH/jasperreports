@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Replaced the in-tree hand-rolled XML parser with an adapter over
+  [`fast-xml-parser`](https://github.com/NaturalIntelligence/fast-xml-parser)
+  for better spec coverage, performance, and maintenance.
+
 ## [0.1.0] - 2026-04-19
 
 ### Added
