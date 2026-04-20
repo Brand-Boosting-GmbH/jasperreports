@@ -50,6 +50,8 @@ export interface ReportElement {
   forecolor?: string;
   backcolor?: string;
   mode?: 'Opaque' | 'Transparent';
+  /** Optional expression controlling whether the element is rendered. */
+  printWhenExpression?: string;
 }
 
 /**
@@ -84,6 +86,8 @@ export interface TextFieldElement {
   reportElement: ReportElement;
   textStyle: TextStyle;
   expression: string;
+  /** Fully-qualified Java class declared on the `<textFieldExpression>` element. */
+  expressionClass?: string;
   textAdjust?: 'StretchHeight' | 'ScaleFont';
   isBlankWhenNull: boolean;
   pattern?: string;

@@ -5,6 +5,7 @@
 import { PDFDocument, StandardFonts, rgb, PDFFont, PDFPage, PDFImage } from 'pdf-lib';
 import { XMLParser } from './xml-parser';
 import { ExpressionEvaluator } from './expression';
+import { formatPattern, isTruthyPrintWhen } from './format';
 import type {
   JRXMLRenderOptions,
   ParsedReport,
@@ -187,6 +188,8 @@ export class JRXMLParser {
     const reportElement = XMLParser.getChild(el, 'reportElement');
     if (!reportElement) return { x: 0, y: 0, width: 100, height: 20 };
 
+    const printWhenExpr = XMLParser.getChild(reportElement, 'printWhenExpression');
+
     return {
       x: XMLParser.getAttrInt(reportElement, 'x', 0),
       y: XMLParser.getAttrInt(reportElement, 'y', 0),
@@ -196,6 +199,7 @@ export class JRXMLParser {
       forecolor: XMLParser.getAttr(reportElement, 'forecolor'),
       backcolor: XMLParser.getAttr(reportElement, 'backcolor'),
       mode: XMLParser.getAttr(reportElement, 'mode') as ReportElement['mode'],
+      printWhenExpression: printWhenExpr ? XMLParser.getText(printWhenExpr) : undefined,
     };
   }
 
@@ -253,9 +257,10 @@ export class JRXMLParser {
       reportElement: this.parseReportElement(el),
       textStyle: this.parseTextStyle(el),
       expression: exprEl ? XMLParser.getText(exprEl) : '',
+      expressionClass: exprEl ? XMLParser.getAttr(exprEl, 'class') || undefined : undefined,
       textAdjust: XMLParser.getAttr(el, 'textAdjust') as TextFieldElement['textAdjust'],
       isBlankWhenNull: XMLParser.getAttrBool(el, 'isBlankWhenNull', false),
-      pattern: XMLParser.getAttr(el, 'pattern'),
+      pattern: XMLParser.getAttr(el, 'pattern') || undefined,
     };
   }
 
@@ -431,12 +436,16 @@ export class JRXMLRenderer {
 
   private parseColor(color: string): ReturnType<typeof rgb> {
     if (!color) return rgb(0, 0, 0);
-    color = color.replace('#', '');
-    if (color.length === 6) {
-      const r = parseInt(color.substring(0, 2), 16) / 255;
-      const g = parseInt(color.substring(2, 4), 16) / 255;
-      const b = parseInt(color.substring(4, 6), 16) / 255;
-      return rgb(r, g, b);
+    let hex = color.replace('#', '');
+    // Expand 3-digit shorthand (#RGB → #RRGGBB).
+    if (hex.length === 3) {
+      hex = hex[0] + hex[0] + hex[1] + hex[1] + hex[2] + hex[2];
+    }
+    if (hex.length === 6) {
+      const r = parseInt(hex.substring(0, 2), 16) / 255;
+      const g = parseInt(hex.substring(2, 4), 16) / 255;
+      const b = parseInt(hex.substring(4, 6), 16) / 255;
+      if (!isNaN(r) && !isNaN(g) && !isNaN(b)) return rgb(r, g, b);
     }
     return rgb(0, 0, 0);
   }
@@ -453,6 +462,13 @@ export class JRXMLRenderer {
   }
 
   private async renderElement(element: BandElement, bandTopY: number): Promise<void> {
+    // Gate rendering on `printWhenExpression` if provided.
+    const pwe = element.reportElement.printWhenExpression;
+    if (pwe) {
+      const result = this.evaluator.evaluate(pwe);
+      if (!isTruthyPrintWhen(result)) return;
+    }
+
     switch (element.type) {
       case 'staticText':
         await this.renderStaticText(element, bandTopY);
@@ -480,13 +496,16 @@ export class JRXMLRenderer {
   }
 
   private async renderTextField(element: TextFieldElement, bandTopY: number): Promise<void> {
-    let text = this.evaluator.evaluate(element.expression);
-    
-    if ((text === null || text === undefined || text === '') && element.isBlankWhenNull) {
+    const raw = this.evaluator.evaluate(element.expression);
+
+    if ((raw === null || raw === undefined || raw === '') && element.isBlankWhenNull) {
       return;
     }
-    
-    text = text?.toString() || '';
+
+    const text = element.pattern
+      ? formatPattern(raw, element.pattern)
+      : raw?.toString() ?? '';
+
     await this.drawText(text, element.reportElement, element.textStyle, bandTopY);
   }
 
@@ -540,6 +559,18 @@ export class JRXMLRenderer {
       }
 
       this.page.drawText(line, { x: textX, y: lineY, size: fontSize, font, color });
+
+      if (textStyle.isUnderline && line) {
+        // Simple underline — one font unit below the baseline, proportional thickness.
+        const underlineY = lineY - fontSize * 0.12;
+        const underlineThickness = Math.max(0.5, fontSize * 0.06);
+        this.page.drawLine({
+          start: { x: textX, y: underlineY },
+          end: { x: textX + lineWidth, y: underlineY },
+          thickness: underlineThickness,
+          color,
+        });
+      }
     }
   }
 
@@ -569,7 +600,7 @@ export class JRXMLRenderer {
     if (!imagePath) return;
 
     let imageBytes: Uint8Array | null = null;
-    
+
     if (this.options.imageResolver) {
       imageBytes = await this.options.imageResolver(imagePath);
     }
@@ -587,15 +618,42 @@ export class JRXMLRenderer {
       }
     }
 
-    const x = this.report.config.leftMargin + element.reportElement.x;
-    const y = bandTopY - element.reportElement.y - element.reportElement.height;
+    const boxX = this.report.config.leftMargin + element.reportElement.x;
+    const boxY = bandTopY - element.reportElement.y - element.reportElement.height;
+    const boxW = element.reportElement.width;
+    const boxH = element.reportElement.height;
 
-    this.page.drawImage(image, {
-      x,
-      y,
-      width: element.reportElement.width,
-      height: element.reportElement.height,
-    });
+    const { width: iw, height: ih } = image;
+    const scaleMode = element.scaleImage ?? 'FillFrame';
+
+    let drawW = boxW;
+    let drawH = boxH;
+
+    if (scaleMode === 'RetainShape') {
+      // Preserve aspect ratio, fit inside the box.
+      const ratio = Math.min(boxW / iw, boxH / ih);
+      drawW = iw * ratio;
+      drawH = ih * ratio;
+    } else if (scaleMode === 'Clip') {
+      // Render at intrinsic size, cropped to the box (pdf-lib has no clipping
+      // primitive, so we cap at the box dimensions).
+      drawW = Math.min(iw, boxW);
+      drawH = Math.min(ih, boxH);
+    }
+    // 'FillFrame' (default) uses the full box.
+
+    // Horizontal / vertical alignment within the box.
+    const hAlign = element.hAlign ?? 'Left';
+    const vAlign = element.vAlign ?? 'Top';
+    let x = boxX;
+    if (hAlign === 'Center') x = boxX + (boxW - drawW) / 2;
+    else if (hAlign === 'Right') x = boxX + (boxW - drawW);
+
+    let y = boxY + (boxH - drawH); // default Top (PDF origin is bottom-left)
+    if (vAlign === 'Middle') y = boxY + (boxH - drawH) / 2;
+    else if (vAlign === 'Bottom') y = boxY;
+
+    this.page.drawImage(image, { x, y, width: drawW, height: drawH });
   }
 
   private async renderLine(element: LineElement, bandTopY: number): Promise<void> {
@@ -608,11 +666,26 @@ export class JRXMLRenderer {
 
     const color = pen ? this.parseColor(pen.lineColor) : rgb(0, 0, 0);
     const thickness = pen?.lineWidth || 1;
+    const dashArray = this.dashArrayForLineStyle(pen?.lineStyle, thickness);
 
-    if (direction === 'BottomUp') {
-      this.page.drawLine({ start: { x: x1, y: y2 }, end: { x: x2, y: y1 }, thickness, color });
-    } else {
-      this.page.drawLine({ start: { x: x1, y: y1 }, end: { x: x2, y: y2 }, thickness, color });
+    const start = direction === 'BottomUp' ? { x: x1, y: y2 } : { x: x1, y: y1 };
+    const end = direction === 'BottomUp' ? { x: x2, y: y1 } : { x: x2, y: y2 };
+
+    this.page.drawLine({ start, end, thickness, color, dashArray });
+  }
+
+  private dashArrayForLineStyle(
+    style: 'Solid' | 'Dashed' | 'Dotted' | undefined,
+    thickness: number,
+  ): number[] | undefined {
+    switch (style) {
+      case 'Dashed':
+        return [Math.max(3, thickness * 3), Math.max(2, thickness * 2)];
+      case 'Dotted':
+        return [Math.max(1, thickness), Math.max(1, thickness * 2)];
+      case 'Solid':
+      default:
+        return undefined;
     }
   }
 

@@ -99,13 +99,16 @@ If any match you are almost certainly outside of this library's supported surfac
 | Attribute | Support |
 |---|---|
 | `reportElement` (x, y, width, height) | ✅ |
-| `forecolor`, `backcolor` | ✅ hex `#RRGGBB` |
+| `forecolor`, `backcolor` | ✅ hex `#RRGGBB` and shorthand `#RGB` |
 | `mode` (`Opaque` / `Transparent`) | ✅ |
 | `textAlignment` | ✅ `Left`, `Center`, `Right` |
 | `verticalAlignment` | ✅ `Top`, `Middle`, `Bottom` |
 | `fontName` | ✅ `Helvetica`, `Times`, `Courier` (standard PDF fonts) |
-| `size`, `isBold`, `isItalic` | ✅ |
-| `pen` (`lineWidth`, `lineColor`) | ✅ |
+| `size`, `isBold`, `isItalic`, `isUnderline` | ✅ |
+| `pen` (`lineWidth`, `lineColor`, `lineStyle`) | ✅ `Solid`, `Dashed`, `Dotted` |
+| `scaleImage` on `<image>` | ✅ `FillFrame`, `RetainShape`, `Clip` (+ `hAlign` / `vAlign`) |
+| `pattern` on `<textField>` | ✅ DecimalFormat / SimpleDateFormat subset |
+| `printWhenExpression` | ✅ evaluated via expression engine |
 
 **Expressions**
 
@@ -148,17 +151,12 @@ If any match you are almost certainly outside of this library's supported surfac
 
 | Attribute | Status | Workaround |
 |---|---|---|
-| `pattern` (date/number formatting) | ❌ parsed but ignored | Pre-format values before passing them in `fields` |
 | `markup` (`html`, `styled`, `rtf`) | ❌ | Plain text only |
 | `rotation` (text rotation) | ❌ | — |
-| `printWhenExpression` (conditional rendering) | ❌ | Omit the element or pre-filter data |
 | `hyperlinkType` / anchors / bookmarks | ❌ | — |
 | `box` / border / padding | ❌ | — |
 | Line spacing / paragraph indent | ❌ | — |
-| `scaleImage` on images | ❌ parsed but ignored | Image always stretches to the element box |
 | Custom fonts via `<fontName>` | ❌ | Falls back to Helvetica |
-| `isUnderline` | ⚠️ parsed but not rendered | — |
-| `lineStyle` (`Dashed` / `Dotted`) | ⚠️ parsed but not rendered | Solid lines only |
 
 **Expressions**
 
@@ -269,12 +267,16 @@ A full Worker example lives in [examples/cloudflare-worker.ts](examples/cloudfla
 
 ## Roadmap
 
+See [ROADMAP.md](ROADMAP.md) for the full prioritized list. Highlights of what's
+still on the list:
+
 - [ ] Automatic multi-page layout
 - [ ] Group headers / footers
 - [ ] Custom font embedding helpers
 - [ ] Richer expression engine (method calls, `SimpleDateFormat`, arithmetic, conditionals)
 - [ ] Subreport support (simple cases)
-- [ ] Render `isUnderline`, `lineStyle`, `scaleImage`, `pattern`
+- [ ] `<style>` / style inheritance
+- [ ] `<box>` borders and padding
 - [ ] Barcode elements via plug-in
 
 ## Development

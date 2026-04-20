@@ -125,3 +125,70 @@ describe('renderJRXML', () => {
     expect(pdfBytes).toBeInstanceOf(Uint8Array);
   });
 });
+
+describe('Tier 1 features', () => {
+  it('accepts #RGB shorthand hex colors without crashing', async () => {
+    const jrxml = `<?xml version="1.0" encoding="UTF-8"?>
+<jasperReport name="ColorTest" pageWidth="200" pageHeight="200"
+              leftMargin="10" rightMargin="10" topMargin="10" bottomMargin="10">
+  <title>
+    <band height="50">
+      <staticText>
+        <reportElement x="0" y="0" width="180" height="20" forecolor="#F0C"/>
+        <text><![CDATA[Hi]]></text>
+      </staticText>
+    </band>
+  </title>
+</jasperReport>`;
+    const pdf = await parseJRXML(jrxml);
+    expect(pdf.bands.title?.elements[0].reportElement.forecolor).toBe('#F0C');
+    const bytes = await renderJRXML(jrxml);
+    expect(bytes).toBeInstanceOf(Uint8Array);
+  });
+
+  it('parses printWhenExpression and expressionClass', () => {
+    const jrxml = `<?xml version="1.0" encoding="UTF-8"?>
+<jasperReport name="PrintWhenTest" pageWidth="200" pageHeight="200"
+              leftMargin="10" rightMargin="10" topMargin="10" bottomMargin="10">
+  <field name="show" class="java.lang.Boolean"/>
+  <field name="amount" class="java.lang.Double"/>
+  <detail>
+    <band height="50">
+      <textField pattern="#,##0.00">
+        <reportElement x="0" y="0" width="180" height="20">
+          <printWhenExpression><![CDATA[$F{show}]]></printWhenExpression>
+        </reportElement>
+        <textFieldExpression class="java.lang.Double"><![CDATA[$F{amount}]]></textFieldExpression>
+      </textField>
+    </band>
+  </detail>
+</jasperReport>`;
+    const report = parseJRXML(jrxml);
+    const el = report.bands.detail[0].elements[0];
+    expect(el.type).toBe('textField');
+    expect(el.reportElement.printWhenExpression).toBe('$F{show}');
+    if (el.type === 'textField') {
+      expect(el.expressionClass).toBe('java.lang.Double');
+      expect(el.pattern).toBe('#,##0.00');
+    }
+  });
+
+  it('renders a pattern-formatted value', async () => {
+    const jrxml = `<?xml version="1.0" encoding="UTF-8"?>
+<jasperReport name="PatternTest" pageWidth="200" pageHeight="200"
+              leftMargin="10" rightMargin="10" topMargin="10" bottomMargin="10">
+  <field name="amount" class="java.lang.Double"/>
+  <detail>
+    <band height="50">
+      <textField pattern="#,##0.00">
+        <reportElement x="0" y="0" width="180" height="20"/>
+        <textFieldExpression class="java.lang.Double"><![CDATA[$F{amount}]]></textFieldExpression>
+      </textField>
+    </band>
+  </detail>
+</jasperReport>`;
+    const bytes = await renderJRXML(jrxml, { fields: { amount: 1234.5 } });
+    expect(bytes).toBeInstanceOf(Uint8Array);
+    expect(bytes.length).toBeGreaterThan(0);
+  });
+});
