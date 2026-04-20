@@ -113,6 +113,15 @@ If any match you are almost certainly outside of this library's supported surfac
 | `<box>` borders + padding | ✅ per-side pens + paddings |
 | `rotation` on text | ✅ `Left`, `Right`, `UpsideDown` |
 | `markup="styled"` | ✅ inline `<b>`, `<i>`, `<u>`, `<color>` |
+| `<group>` + `groupHeader` / `groupFooter` | ✅ emitted on value change, reprint on new page |
+| `<variable calculation="…">` | ✅ `Sum`, `Count`, `Average`, `Lowest`, `Highest`, `First` |
+| Built-in vars `PAGE_NUMBER`, `PAGE_COUNT`, `REPORT_COUNT` | ✅ two-pass render resolves `PAGE_COUNT` |
+| Multi-page layout | ✅ auto page break + repeat `pageHeader` / `columnHeader` |
+| `<lastPageFooter>` | ✅ replaces `pageFooter` on final page |
+| `textAdjust="StretchHeight"` | ✅ element grows to fit wrapped lines |
+| Custom font embedding | ✅ via `fonts: { fontkit, families }` render option |
+| Iterable data source | ✅ via `dataSource: Row[]` render option |
+| Resource bundles `$R{key}` | ✅ via `resources` render option |
 
 **Expressions**
 
@@ -135,13 +144,10 @@ If any match you are almost certainly outside of this library's supported surfac
 | Feature | Why not |
 |---|---|
 | `<subreport>` | Requires nested report execution |
-| `<group>` + `groupHeader` / `groupFooter` | Requires data-driven grouping |
 | `<template>` / external stylesheets | No external resource loading |
 | `<queryString>` | No database access |
 | `<scriptlet>` | No Java execution |
 | `<sortField>` | No data sorting |
-| Report variables with calculations (`Sum`, `Average`, `Count`, …) | Only static substitution |
-| Resource bundles / i18n | No locale support |
 
 **Elements**
 

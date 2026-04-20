@@ -6,8 +6,50 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+## [0.4.0] - 2026-04-20
 
-## [0.3.0] - 2026-04-21
+### Added
+- **Iterable data source.** New `dataSource: Array<Record<string, any>>`
+  render option — the `<detail>` band is rendered once per row, with
+  `$F{...}` bound to that row's fields. Falls back to a single iteration
+  using `options.fields` when omitted.
+- **Automatic multi-page layout.** When a band won't fit above the
+  `pageFooter`, a new page is started and the `<pageHeader>` +
+  `<columnHeader>` are automatically repeated. `<lastPageFooter>` (if
+  present) replaces `<pageFooter>` on the final page.
+- **Report variables with calculations.** Full support for
+  `calculation="Sum" | "Count" | "DistinctCount" | "Average" | "Lowest" |
+  "Highest" | "First" | "Nothing"`, with `resetType="Report" | "Page" |
+  "Group"` and optional `resetGroup`. Custom `<variableExpression>` and
+  `<initialValueExpression>` are evaluated.
+- **Built-in variables** `PAGE_NUMBER`, `PAGE_COUNT`, and `REPORT_COUNT`.
+  `PAGE_COUNT` is resolved via transparent two-pass rendering when the
+  template references it.
+- **Groups.** `<group>` declarations with `<groupExpression>`,
+  `<groupHeader>`, and `<groupFooter>`. Headers/footers are emitted
+  automatically as the group expression value changes across rows.
+  `isReprintHeaderOnEachPage` causes the group header to repeat at the
+  top of each page the group spans.
+- **Dynamic band height.** `textAdjust="StretchHeight"` on `<textField>`
+  grows the text box to fit wrapped lines and extends the band height
+  accordingly.
+- **Custom font embedding.** New `fonts: { fontkit, families }` render
+  option — pass a `@pdf-lib/fontkit` instance plus family bytes
+  (normal/bold/italic/boldItalic) to use arbitrary TrueType/OpenType
+  fonts. Family names in `<font fontName="…">` resolve to the custom
+  family when registered.
+- **Resource bundles.** `$R{key}` expressions resolve from the new
+  `resources` render option.
+- **`SimpleDateFormat` in expressions** — covered by the v0.3.0 engine
+  rewrite (roadmap item #18), now verified by Tier 3 tests.
+
+### Changed
+- `ParsedReport.variables` is now `Map<string, ReportVariable>` with the
+  full variable declaration instead of a shallow subset.
+- `ParsedReport` now exposes `groups: ReportGroup[]`.
+- Renderer internals are reorganized around a single `renderPass()`
+  method that both the dry-run and the final pass share.
+## [0.3.0] - 2026-04-20
 
 ### Added
 - **Expression engine rewrite.** Replaced the regex-based evaluator with a

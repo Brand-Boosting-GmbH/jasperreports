@@ -11,7 +11,30 @@ export interface JRXMLRenderOptions {
   
   /** Parameter values - maps to $P{paramName} in JRXML */
   parameters?: Record<string, any>;
-  
+
+  /**
+   * Rows of data to iterate. When provided, the detail band is rendered once
+   * per row with `$F{...}` bound to that row's values. Falls back to a single
+   * iteration with `options.fields` when omitted.
+   */
+  dataSource?: Array<Record<string, any>>;
+
+  /**
+   * Resource bundle for `$R{key}` lookups.
+   */
+  resources?: Record<string, any>;
+
+  /**
+   * Custom font embedding. Requires the caller to pass a `@pdf-lib/fontkit`
+   * instance so pdf-lib can decode arbitrary TrueType/OpenType fonts.
+   */
+  fonts?: {
+    /** A `@pdf-lib/fontkit` module (`import fontkit from '@pdf-lib/fontkit'`). */
+    fontkit: any;
+    /** Map of font family name → font variant bytes. */
+    families: Record<string, CustomFontFamily>;
+  };
+
   /** 
    * Image resolver function - returns image bytes for a given path/expression
    * @param path - The image path from the JRXML expression
@@ -21,6 +44,16 @@ export interface JRXMLRenderOptions {
   
   /** Enable debug logging */
   debug?: boolean;
+}
+
+/**
+ * Raw bytes for each variant of a custom font family.
+ */
+export interface CustomFontFamily {
+  normal: Uint8Array | ArrayBuffer;
+  bold?: Uint8Array | ArrayBuffer;
+  italic?: Uint8Array | ArrayBuffer;
+  boldItalic?: Uint8Array | ArrayBuffer;
 }
 
 /**
@@ -214,6 +247,47 @@ export interface Band {
 }
 
 /**
+ * A `<group>` declaration: groups rows by a common expression value and
+ * emits `<groupHeader>` when the value changes (or is first seen) and
+ * `<groupFooter>` before the next change or at the end of the report.
+ */
+export interface ReportGroup {
+  name: string;
+  expression: string;
+  /** Render the header only when the new group starts on a fresh page. */
+  isStartNewPage?: boolean;
+  /** Render the header on every page the group spans. */
+  isReprintHeaderOnEachPage?: boolean;
+  header?: Band;
+  footer?: Band;
+}
+
+/**
+ * A `<variable>` declaration with optional calculation + reset semantics.
+ */
+export interface ReportVariable {
+  name: string;
+  class: string;
+  calculation?:
+    | 'Nothing'
+    | 'Count'
+    | 'DistinctCount'
+    | 'Sum'
+    | 'Average'
+    | 'Lowest'
+    | 'Highest'
+    | 'First'
+    | 'StandardDeviation'
+    | 'Variance';
+  resetType?: 'None' | 'Report' | 'Page' | 'Column' | 'Group';
+  resetGroup?: string;
+  incrementType?: 'None' | 'Report' | 'Page' | 'Column' | 'Group';
+  incrementGroup?: string;
+  expression?: string;
+  initialValueExpression?: string;
+}
+
+/**
  * Parsed JRXML report structure
  */
 export interface ParsedReport {
@@ -227,10 +301,13 @@ export interface ParsedReport {
   parameters: Map<string, { class: string; defaultValue?: string }>;
   
   /** Variable definitions */
-  variables: Map<string, { class: string; calculation?: string; expression?: string }>;
+  variables: Map<string, ReportVariable>;
 
   /** Named `<style>` declarations for inheritance. */
   styles: Map<string, ReportStyle>;
+
+  /** `<group>` declarations in document order (outer-most first). */
+  groups: ReportGroup[];
   
   /** Report bands */
   bands: {

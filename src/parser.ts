@@ -24,6 +24,8 @@ import type {
   ReportStyle,
   BoxStyle,
   BoxPen,
+  ReportGroup,
+  ReportVariable,
 } from './types';
 
 // Re-export for library users
@@ -67,11 +69,12 @@ export class JRXMLParser {
     const parameters = this.parseParameters(root);
     const variables = this.parseVariables(root);
     this.parseStyles(root); // populate this.styles before parsing bands
+    const groups = this.parseGroups(root);
     const bands = this.parseBands(root);
 
     this.log('Parse complete');
 
-    return { config, fields, parameters, variables, styles: this.styles, bands };
+    return { config, fields, parameters, variables, styles: this.styles, groups, bands };
   }
 
   private parseConfig(root: XMLElement): ReportConfig {
@@ -114,22 +117,48 @@ export class JRXMLParser {
     return params;
   }
 
-  private parseVariables(root: XMLElement): Map<string, { class: string; calculation?: string; expression?: string }> {
-    const vars = new Map();
+  private parseVariables(root: XMLElement): Map<string, ReportVariable> {
+    const vars = new Map<string, ReportVariable>();
     for (const v of XMLParser.getChildren(root, 'variable')) {
       const name = XMLParser.getAttr(v, 'name');
-      const cls = XMLParser.getAttr(v, 'class', 'java.lang.String');
-      const calculation = XMLParser.getAttr(v, 'calculation');
+      if (!name) continue;
       const expr = XMLParser.getChild(v, 'variableExpression');
-      if (name) {
-        vars.set(name, {
-          class: cls,
-          calculation,
-          expression: expr ? XMLParser.getText(expr) : undefined,
-        });
-      }
+      const initExpr = XMLParser.getChild(v, 'initialValueExpression');
+      vars.set(name, {
+        name,
+        class: XMLParser.getAttr(v, 'class', 'java.lang.String'),
+        calculation: (XMLParser.getAttr(v, 'calculation') || 'Nothing') as ReportVariable['calculation'],
+        resetType: (XMLParser.getAttr(v, 'resetType') || 'Report') as ReportVariable['resetType'],
+        resetGroup: XMLParser.getAttr(v, 'resetGroup') || undefined,
+        incrementType: (XMLParser.getAttr(v, 'incrementType') || 'None') as ReportVariable['incrementType'],
+        incrementGroup: XMLParser.getAttr(v, 'incrementGroup') || undefined,
+        expression: expr ? XMLParser.getText(expr) : undefined,
+        initialValueExpression: initExpr ? XMLParser.getText(initExpr) : undefined,
+      });
     }
     return vars;
+  }
+
+  private parseGroups(root: XMLElement): ReportGroup[] {
+    const groups: ReportGroup[] = [];
+    for (const g of XMLParser.getChildren(root, 'group')) {
+      const name = XMLParser.getAttr(g, 'name');
+      if (!name) continue;
+      const exprEl = XMLParser.getChild(g, 'groupExpression');
+      const headerContainer = XMLParser.getChild(g, 'groupHeader');
+      const footerContainer = XMLParser.getChild(g, 'groupFooter');
+      const headerBand = headerContainer ? XMLParser.getChild(headerContainer, 'band') : null;
+      const footerBand = footerContainer ? XMLParser.getChild(footerContainer, 'band') : null;
+      groups.push({
+        name,
+        expression: exprEl ? XMLParser.getText(exprEl) : '',
+        isStartNewPage: XMLParser.getAttrBool(g, 'isStartNewPage', false),
+        isReprintHeaderOnEachPage: XMLParser.getAttrBool(g, 'isReprintHeaderOnEachPage', false),
+        header: headerBand ? this.parseBand(headerBand) : undefined,
+        footer: footerBand ? this.parseBand(footerBand) : undefined,
+      });
+    }
+    return groups;
   }
 
   private parseStyles(root: XMLElement): void {
@@ -431,10 +460,24 @@ export class JRXMLRenderer {
   private pdfDoc!: PDFDocument;
   private page!: PDFPage;
   private fonts: Map<string, PDFFont> = new Map();
+  private customFamilies: Set<string> = new Set();
   private report!: ParsedReport;
   private options!: JRXMLRenderOptions;
   private evaluator!: ExpressionEvaluator;
   private currentY: number = 0;
+
+  // Multi-page / iteration state.
+  private rows: Array<Record<string, unknown>> = [];
+  private pageNumber = 1;
+  private totalPages = 0; // resolved on pass 2
+  private reportCount = 0; // total rows processed
+  private isLastPage = false;
+
+  // Variable + group state.
+  private variableValues: Map<string, unknown> = new Map();
+  private variableCounts: Map<string, number> = new Map(); // for Average
+  private groupPrevValues: Map<string, unknown> = new Map();
+  private groupRowCounts: Map<string, number> = new Map();
 
   /**
    * Render a parsed report to PDF
@@ -442,52 +485,288 @@ export class JRXMLRenderer {
   async render(report: ParsedReport, options: JRXMLRenderOptions = {}): Promise<Uint8Array> {
     this.report = report;
     this.options = options;
-    this.evaluator = new ExpressionEvaluator(
-      options.fields || {},
-      options.parameters || {},
-      {},
-      options.debug
-    );
 
+    // Two-pass if any expression references PAGE_COUNT — we need the final
+    // page count resolved before drawing.
+    const needsTwoPass = this.templateReferencesPageCount();
+    if (needsTwoPass) {
+      await this.renderPass(0);
+      this.totalPages = this.pageNumber;
+    }
+    await this.renderPass(this.totalPages);
+
+    return await this.pdfDoc.save();
+  }
+
+  /**
+   * Execute a single pass. `knownTotalPages` is 0 on the first (dry) pass.
+   */
+  private async renderPass(knownTotalPages: number): Promise<void> {
     this.pdfDoc = await PDFDocument.create();
     await this.embedFonts();
 
-    const { pageWidth, pageHeight } = report.config;
+    this.rows = this.options.dataSource && this.options.dataSource.length > 0
+      ? this.options.dataSource
+      : [this.options.fields || {}];
+
+    this.pageNumber = 1;
+    this.reportCount = 0;
+    this.isLastPage = false;
+    this.variableValues.clear();
+    this.variableCounts.clear();
+    this.groupPrevValues.clear();
+    this.groupRowCounts.clear();
+    this.resetEvaluator(this.rows[0] ?? {}, knownTotalPages);
+    this.initVariables();
+
+    const { pageWidth, pageHeight } = this.report.config;
     this.page = this.pdfDoc.addPage([pageWidth, pageHeight]);
-    this.currentY = pageHeight - report.config.topMargin;
+    this.currentY = pageHeight - this.report.config.topMargin;
 
-    // Render bands in order
-    const bandOrder: Array<keyof ParsedReport['bands']> = [
-      'title', 'pageHeader', 'columnHeader'
-    ];
+    // Background is drawn on every page; title only on the first page.
+    if (this.report.bands.title) await this.renderBand(this.report.bands.title);
+    if (this.report.bands.pageHeader) await this.renderBand(this.report.bands.pageHeader);
+    if (this.report.bands.columnHeader) await this.renderBand(this.report.bands.columnHeader);
 
-    for (const bandName of bandOrder) {
-      const band = report.bands[bandName];
-      if (band && !Array.isArray(band)) {
-        await this.renderBand(band);
+    // Detail iteration — one pass per row, with groups + variables.
+    for (let i = 0; i < this.rows.length; i++) {
+      this.reportCount = i + 1;
+      this.resetEvaluator(this.rows[i], knownTotalPages);
+
+      await this.emitGroupBoundaries(i);
+      this.updateVariables(i);
+      // Re-sync evaluator with refreshed variables.
+      this.evaluator.setVariables(Object.fromEntries(this.variableValues));
+
+      for (const detail of this.report.bands.detail) {
+        await this.renderBand(detail);
       }
     }
 
-    // Detail bands
-    for (const detailBand of report.bands.detail) {
-      await this.renderBand(detailBand);
+    // After all rows: emit all group footers (innermost first) and summary.
+    await this.emitAllGroupFooters();
+    if (this.report.bands.summary) await this.renderBand(this.report.bands.summary);
+
+    // Final page: draw the page footer one more time.
+    this.isLastPage = true;
+    await this.drawPageFooter();
+  }
+
+  private templateReferencesPageCount(): boolean {
+    const seen = new Set<string>();
+    const walk = (band?: Band): void => {
+      if (!band) return;
+      for (const el of band.elements) {
+        if (el.type === 'textField') seen.add(el.expression);
+        if (el.type === 'staticText') seen.add(el.text);
+      }
+    };
+    const { bands, groups } = this.report;
+    walk(bands.title); walk(bands.pageHeader); walk(bands.columnHeader);
+    walk(bands.columnFooter); walk(bands.pageFooter); walk(bands.lastPageFooter);
+    walk(bands.summary); walk(bands.background); walk(bands.noData);
+    for (const d of bands.detail) walk(d);
+    for (const g of groups) { walk(g.header); walk(g.footer); }
+    return Array.from(seen).some((s) => s.includes('PAGE_COUNT') || s.includes('PAGE_NUMBER_TOTAL'));
+  }
+
+  private resetEvaluator(row: Record<string, unknown>, knownTotalPages: number): void {
+    const baseFields = { ...(this.options.fields || {}), ...row };
+    const params = { ...(this.options.parameters || {}) };
+    this.evaluator = new ExpressionEvaluator(
+      baseFields,
+      params,
+      Object.fromEntries(this.variableValues),
+      this.options.debug,
+      this.options.resources || {},
+    );
+    // Inject built-in variables.
+    this.variableValues.set('PAGE_NUMBER', this.pageNumber);
+    this.variableValues.set('PAGE_COUNT', knownTotalPages);
+    this.variableValues.set('REPORT_COUNT', this.reportCount);
+    this.evaluator.setVariables(Object.fromEntries(this.variableValues));
+  }
+
+  private initVariables(): void {
+    for (const v of this.report.variables.values()) {
+      const seed = v.initialValueExpression
+        ? this.evaluator.evaluate(v.initialValueExpression)
+        : (v.calculation === 'Count' || v.calculation === 'Sum' ? 0 : null);
+      this.variableValues.set(v.name, seed);
+      this.variableCounts.set(v.name, 0);
+    }
+  }
+
+  private updateVariables(_rowIndex: number): void {
+    for (const v of this.report.variables.values()) {
+      // Reset handling (simplified): `Report` never resets after init; `Page`
+      // resets on page break (handled in startNewPage). Groups handled via
+      // emitGroupBoundaries. For 'None' or 'Report' we just accumulate.
+      if (!v.expression) continue;
+      const value = this.evaluator.evaluate(v.expression);
+      this.accumulateVariable(v, value);
+    }
+  }
+
+  private accumulateVariable(v: ReportVariable, value: unknown): void {
+    const calc = v.calculation || 'Nothing';
+    const prev = this.variableValues.get(v.name);
+    const count = (this.variableCounts.get(v.name) ?? 0) + 1;
+    this.variableCounts.set(v.name, count);
+    const toNum = (x: unknown): number => {
+      if (x === null || x === undefined || x === '') return 0;
+      const n = typeof x === 'number' ? x : Number(x);
+      return isNaN(n) ? 0 : n;
+    };
+    switch (calc) {
+      case 'Nothing':
+        this.variableValues.set(v.name, value);
+        break;
+      case 'Count':
+      case 'DistinctCount':
+        this.variableValues.set(v.name, (typeof prev === 'number' ? prev : 0) + 1);
+        break;
+      case 'Sum':
+        this.variableValues.set(v.name, toNum(prev) + toNum(value));
+        break;
+      case 'Average': {
+        const newSum = toNum(prev) * (count - 1) + toNum(value);
+        this.variableValues.set(v.name, newSum / count);
+        break;
+      }
+      case 'Lowest':
+        this.variableValues.set(v.name, prev === null || prev === undefined || toNum(value) < toNum(prev) ? value : prev);
+        break;
+      case 'Highest':
+        this.variableValues.set(v.name, prev === null || prev === undefined || toNum(value) > toNum(prev) ? value : prev);
+        break;
+      case 'First':
+        if (prev === null || prev === undefined) this.variableValues.set(v.name, value);
+        break;
+      default:
+        this.variableValues.set(v.name, value);
+    }
+  }
+
+  private resetPageVariables(): void {
+    for (const v of this.report.variables.values()) {
+      if (v.resetType === 'Page') {
+        const seed = v.initialValueExpression ? this.evaluator.evaluate(v.initialValueExpression) : null;
+        this.variableValues.set(v.name, seed);
+        this.variableCounts.set(v.name, 0);
+      }
+    }
+  }
+
+  private resetGroupVariables(groupName: string): void {
+    for (const v of this.report.variables.values()) {
+      if (v.resetType === 'Group' && v.resetGroup === groupName) {
+        const seed = v.initialValueExpression ? this.evaluator.evaluate(v.initialValueExpression) : null;
+        this.variableValues.set(v.name, seed);
+        this.variableCounts.set(v.name, 0);
+      }
+    }
+  }
+
+  /**
+   * Detect which groups have changed between the previous and current row,
+   * emit outgoing group footers (innermost first), then incoming headers
+   * (outermost first).
+   */
+  private async emitGroupBoundaries(_rowIndex: number): Promise<void> {
+    const groups = this.report.groups;
+    if (groups.length === 0) return;
+
+    // Determine which groups changed (outermost-first wins — if an outer
+    // group changes, all inner groups are considered changed too).
+    const changed: boolean[] = new Array(groups.length).fill(false);
+    for (let i = 0; i < groups.length; i++) {
+      const g = groups[i];
+      const value = this.evaluator.evaluate(g.expression);
+      const prev = this.groupPrevValues.has(g.name)
+        ? this.groupPrevValues.get(g.name)
+        : Symbol.for('jasperreports.unset');
+      if (prev === Symbol.for('jasperreports.unset') || prev !== value) {
+        changed[i] = true;
+        // Mark all inner groups as changed too.
+        for (let j = i + 1; j < groups.length; j++) changed[j] = true;
+      }
     }
 
-    // Footer bands
-    if (report.bands.columnFooter) {
-      await this.renderBand(report.bands.columnFooter);
+    // Emit footers for changed groups (innermost-first), but only if this
+    // is not the first time we've seen the group (i.e., prev was set).
+    for (let i = groups.length - 1; i >= 0; i--) {
+      if (!changed[i]) continue;
+      const g = groups[i];
+      if (this.groupPrevValues.has(g.name) && g.footer) {
+        await this.renderBand(g.footer);
+      }
     }
 
-    if (report.bands.pageFooter) {
-      const footerY = report.config.bottomMargin + report.bands.pageFooter.height;
-      await this.renderBandAtY(report.bands.pageFooter, footerY);
+    // Emit headers for changed groups (outermost-first) and update state.
+    for (let i = 0; i < groups.length; i++) {
+      if (!changed[i]) continue;
+      const g = groups[i];
+      if (g.header) await this.renderBand(g.header);
+      this.groupPrevValues.set(g.name, this.evaluator.evaluate(g.expression));
+      this.resetGroupVariables(g.name);
     }
+  }
 
-    if (report.bands.summary) {
-      await this.renderBand(report.bands.summary);
+  private async emitAllGroupFooters(): Promise<void> {
+    const groups = this.report.groups;
+    for (let i = groups.length - 1; i >= 0; i--) {
+      const g = groups[i];
+      if (this.groupPrevValues.has(g.name) && g.footer) {
+        await this.renderBand(g.footer);
+      }
     }
+  }
 
-    return await this.pdfDoc.save();
+  /**
+   * Ensure `requiredHeight` fits on the current page; otherwise start a new
+   * page (drawing the page footer and repeating page/column headers).
+   */
+  private async ensureSpace(requiredHeight: number): Promise<void> {
+    const footerHeight = this.report.bands.pageFooter?.height ?? 0;
+    const floor = this.report.config.bottomMargin + footerHeight;
+    if (this.currentY - requiredHeight >= floor) return;
+    await this.startNewPage();
+  }
+
+  private async startNewPage(): Promise<void> {
+    // Draw page footer at bottom of the current page first.
+    await this.drawPageFooter();
+
+    // Open a new page.
+    this.pageNumber++;
+    this.resetPageVariables();
+    const { pageWidth, pageHeight } = this.report.config;
+    this.page = this.pdfDoc.addPage([pageWidth, pageHeight]);
+    this.currentY = pageHeight - this.report.config.topMargin;
+    // Sync built-in PAGE_NUMBER into the evaluator.
+    this.variableValues.set('PAGE_NUMBER', this.pageNumber);
+    this.evaluator.setVariables(Object.fromEntries(this.variableValues));
+
+    if (this.report.bands.pageHeader) await this.renderBandAtY(this.report.bands.pageHeader, this.currentY), this.currentY -= this.report.bands.pageHeader.height;
+    if (this.report.bands.columnHeader) await this.renderBandAtY(this.report.bands.columnHeader, this.currentY), this.currentY -= this.report.bands.columnHeader.height;
+
+    // Reprint group headers marked for reprint on each page.
+    for (const g of this.report.groups) {
+      if (g.isReprintHeaderOnEachPage && g.header && this.groupPrevValues.has(g.name)) {
+        await this.renderBandAtY(g.header, this.currentY);
+        this.currentY -= g.header.height;
+      }
+    }
+  }
+
+  private async drawPageFooter(): Promise<void> {
+    const footerBand = this.isLastPage && this.report.bands.lastPageFooter
+      ? this.report.bands.lastPageFooter
+      : this.report.bands.pageFooter;
+    if (!footerBand) return;
+    const y = this.report.config.bottomMargin + footerBand.height;
+    await this.renderBandAtY(footerBand, y);
   }
 
   private async embedFonts(): Promise<void> {
@@ -506,21 +785,55 @@ export class JRXMLRenderer {
       ['Courier-BoldOblique', StandardFonts.CourierBoldOblique],
     ];
 
+    this.fonts = new Map();
+    this.customFamilies = new Set();
     for (const [name, font] of fontMap) {
       this.fonts.set(name, await this.pdfDoc.embedFont(font));
     }
+
+    // Custom fonts (requires user to pass a fontkit instance).
+    const custom = this.options.fonts;
+    if (custom && custom.fontkit && custom.families) {
+      (this.pdfDoc as any).registerFontkit(custom.fontkit);
+      for (const [family, variants] of Object.entries(custom.families)) {
+        this.customFamilies.add(family.toLowerCase());
+        const embed = async (suffix: string, bytes: Uint8Array | ArrayBuffer | undefined) => {
+          if (!bytes) return;
+          const f = await this.pdfDoc.embedFont(bytes);
+          this.fonts.set(`${family}${suffix}`, f);
+        };
+        await embed('', variants.normal);
+        await embed('-Bold', variants.bold);
+        await embed('-Italic', variants.italic);
+        await embed('-BoldItalic', variants.boldItalic);
+      }
+    }
   }
 
+
+
   private getFont(style: TextStyle): PDFFont {
-    const fontName = style.fontName.toLowerCase();
+    const fontName = style.fontName;
+    const lower = fontName.toLowerCase();
+
+    // Custom family match wins over standard font matching.
+    if (this.customFamilies.has(lower)) {
+      const variant = style.isBold && style.isItalic ? '-BoldItalic'
+        : style.isBold ? '-Bold'
+        : style.isItalic ? '-Italic'
+        : '';
+      const key = `${fontName}${variant}`;
+      return this.fonts.get(key) ?? this.fonts.get(fontName) ?? this.fonts.get('Helvetica')!;
+    }
+
     let fontKey = 'Helvetica';
 
-    if (fontName.includes('times')) {
+    if (lower.includes('times')) {
       fontKey = 'Times-Roman';
       if (style.isBold && style.isItalic) fontKey = 'Times-BoldItalic';
       else if (style.isBold) fontKey = 'Times-Bold';
       else if (style.isItalic) fontKey = 'Times-Italic';
-    } else if (fontName.includes('courier') || fontName.includes('mono')) {
+    } else if (lower.includes('courier') || lower.includes('mono')) {
       fontKey = 'Courier';
       if (style.isBold && style.isItalic) fontKey = 'Courier-BoldOblique';
       else if (style.isBold) fontKey = 'Courier-Bold';
@@ -551,8 +864,47 @@ export class JRXMLRenderer {
   }
 
   private async renderBand(band: Band): Promise<void> {
+    const effectiveHeight = this.measureBandHeight(band);
+    // Don't paginate on bands whose splitType is 'Prevent' — but only detail
+    // bands are eligible anyway; the rest (headers/footers) we always draw.
+    if (band.splitType !== 'Prevent' || band.height <= effectiveHeight) {
+      await this.ensureSpace(effectiveHeight);
+    }
     await this.renderBandAtY(band, this.currentY);
-    this.currentY -= band.height;
+    this.currentY -= effectiveHeight;
+  }
+
+  /**
+   * Compute the rendered height of a band accounting for `textAdjust="StretchHeight"`
+   * on text fields (which grows the element box to fit wrapped lines).
+   */
+  private measureBandHeight(band: Band): number {
+    let maxBottomOffset = band.height;
+    for (const el of band.elements) {
+      if (el.type !== 'textField' && el.type !== 'staticText') continue;
+      const stretchable = el.type === 'textField' && el.textAdjust === 'StretchHeight';
+      if (!stretchable) continue;
+
+      const re = el.reportElement;
+      const style = el.textStyle;
+      const font = this.getFont(style);
+      const padLeft = el.box?.leftPadding ?? 0;
+      const padRight = el.box?.rightPadding ?? 0;
+      const padTop = el.box?.topPadding ?? 0;
+      const padBottom = el.box?.bottomPadding ?? 0;
+      const contentWidth = re.width - padLeft - padRight;
+      // `stretchable` is only true for textField — no staticText branch needed.
+      const tf = el as TextFieldElement;
+      const raw = this.evaluator.evaluate(tf.expression);
+      const text = tf.pattern
+        ? formatPattern(raw, tf.pattern)
+        : (raw as unknown)?.toString?.() ?? '';
+      const lines = this.wrapText(text, font, style.fontSize, contentWidth);
+      const needed = lines.length * style.fontSize * 1.2 + padTop + padBottom;
+      const bottom = re.y + Math.max(re.height, needed);
+      if (bottom > maxBottomOffset) maxBottomOffset = bottom;
+    }
+    return maxBottomOffset;
   }
 
   private async renderBandAtY(band: Band, bandTopY: number): Promise<void> {
@@ -607,8 +959,24 @@ export class JRXMLRenderer {
       ? formatPattern(raw, element.pattern)
       : raw?.toString() ?? '';
 
-    this.drawBox(element.reportElement, element.box, bandTopY);
-    await this.drawText(text, element.reportElement, element.textStyle, bandTopY, element.box);
+    // Grow the element box vertically when textAdjust="StretchHeight".
+    let reportElement = element.reportElement;
+    if (element.textAdjust === 'StretchHeight' && text) {
+      const font = this.getFont(element.textStyle);
+      const padLeft = element.box?.leftPadding ?? 0;
+      const padRight = element.box?.rightPadding ?? 0;
+      const padTop = element.box?.topPadding ?? 0;
+      const padBottom = element.box?.bottomPadding ?? 0;
+      const contentWidth = reportElement.width - padLeft - padRight;
+      const lines = this.wrapText(text, font, element.textStyle.fontSize, contentWidth);
+      const needed = lines.length * element.textStyle.fontSize * 1.2 + padTop + padBottom;
+      if (needed > reportElement.height) {
+        reportElement = { ...reportElement, height: needed };
+      }
+    }
+
+    this.drawBox(reportElement, element.box, bandTopY);
+    await this.drawText(text, reportElement, element.textStyle, bandTopY, element.box);
   }
 
   private async drawText(

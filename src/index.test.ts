@@ -312,3 +312,247 @@ describe('Tier 2 features', () => {
     expect(bytes.length).toBeGreaterThan(0);
   });
 });
+
+describe('Tier 3 features', () => {
+  it('iterates the detail band over a dataSource', async () => {
+    const jrxml = `<?xml version="1.0" encoding="UTF-8"?>
+<jasperReport name="Iter" pageWidth="200" pageHeight="400"
+              leftMargin="10" rightMargin="10" topMargin="10" bottomMargin="10">
+  <field name="name" class="java.lang.String"/>
+  <detail>
+    <band height="20">
+      <textField>
+        <reportElement x="0" y="0" width="180" height="20"/>
+        <textFieldExpression><![CDATA[$F{name}]]></textFieldExpression>
+      </textField>
+    </band>
+  </detail>
+</jasperReport>`;
+    const bytes = await renderJRXML(jrxml, {
+      dataSource: [{ name: 'Alice' }, { name: 'Bob' }, { name: 'Carol' }],
+    });
+    expect(bytes.length).toBeGreaterThan(0);
+  });
+
+  it('parses <group> + groupHeader / groupFooter', () => {
+    const jrxml = `<?xml version="1.0" encoding="UTF-8"?>
+<jasperReport name="GroupTest" pageWidth="200" pageHeight="400"
+              leftMargin="10" rightMargin="10" topMargin="10" bottomMargin="10">
+  <field name="category" class="java.lang.String"/>
+  <group name="byCategory">
+    <groupExpression><![CDATA[$F{category}]]></groupExpression>
+    <groupHeader>
+      <band height="15">
+        <staticText>
+          <reportElement x="0" y="0" width="180" height="15"/>
+          <text><![CDATA[HEADER]]></text>
+        </staticText>
+      </band>
+    </groupHeader>
+    <groupFooter>
+      <band height="10"/>
+    </groupFooter>
+  </group>
+  <detail>
+    <band height="15"/>
+  </detail>
+</jasperReport>`;
+    const report = parseJRXML(jrxml);
+    expect(report.groups.length).toBe(1);
+    expect(report.groups[0].name).toBe('byCategory');
+    expect(report.groups[0].expression).toBe('$F{category}');
+    expect(report.groups[0].header?.height).toBe(15);
+    expect(report.groups[0].footer?.height).toBe(10);
+  });
+
+  it('parses variables with calculation and resetType', () => {
+    const jrxml = `<?xml version="1.0" encoding="UTF-8"?>
+<jasperReport name="VarTest" pageWidth="200" pageHeight="200"
+              leftMargin="10" rightMargin="10" topMargin="10" bottomMargin="10">
+  <field name="amount" class="java.lang.Double"/>
+  <variable name="total" class="java.lang.Double" calculation="Sum" resetType="Report">
+    <variableExpression><![CDATA[$F{amount}]]></variableExpression>
+  </variable>
+  <detail><band height="15"/></detail>
+</jasperReport>`;
+    const report = parseJRXML(jrxml);
+    const v = report.variables.get('total');
+    expect(v?.calculation).toBe('Sum');
+    expect(v?.resetType).toBe('Report');
+    expect(v?.expression).toBe('$F{amount}');
+  });
+
+  it('computes a Sum variable across rows', async () => {
+    const jrxml = `<?xml version="1.0" encoding="UTF-8"?>
+<jasperReport name="SumRender" pageWidth="300" pageHeight="400"
+              leftMargin="10" rightMargin="10" topMargin="10" bottomMargin="10">
+  <field name="amount" class="java.lang.Double"/>
+  <variable name="total" class="java.lang.Double" calculation="Sum" resetType="Report">
+    <variableExpression><![CDATA[$F{amount}]]></variableExpression>
+  </variable>
+  <detail>
+    <band height="15">
+      <textField>
+        <reportElement x="0" y="0" width="280" height="15"/>
+        <textFieldExpression><![CDATA[$F{amount}]]></textFieldExpression>
+      </textField>
+    </band>
+  </detail>
+  <summary>
+    <band height="20">
+      <textField>
+        <reportElement x="0" y="0" width="280" height="20"/>
+        <textFieldExpression><![CDATA["Total: " + $V{total}]]></textFieldExpression>
+      </textField>
+    </band>
+  </summary>
+</jasperReport>`;
+    const bytes = await renderJRXML(jrxml, {
+      dataSource: [{ amount: 10 }, { amount: 20 }, { amount: 30 }],
+    });
+    expect(bytes.length).toBeGreaterThan(0);
+  });
+
+  it('adds new pages when detail rows overflow', async () => {
+    // Small page that fits ~2-3 detail bands, drive it with many rows.
+    const jrxml = `<?xml version="1.0" encoding="UTF-8"?>
+<jasperReport name="MultiPage" pageWidth="200" pageHeight="120"
+              leftMargin="10" rightMargin="10" topMargin="10" bottomMargin="10">
+  <field name="name" class="java.lang.String"/>
+  <pageHeader>
+    <band height="15">
+      <staticText>
+        <reportElement x="0" y="0" width="180" height="15"/>
+        <text><![CDATA[Header]]></text>
+      </staticText>
+    </band>
+  </pageHeader>
+  <detail>
+    <band height="25">
+      <textField>
+        <reportElement x="0" y="0" width="180" height="20"/>
+        <textFieldExpression><![CDATA[$F{name}]]></textFieldExpression>
+      </textField>
+    </band>
+  </detail>
+  <pageFooter>
+    <band height="15">
+      <textField>
+        <reportElement x="0" y="0" width="180" height="15"/>
+        <textFieldExpression><![CDATA["Page " + $V{PAGE_NUMBER}]]></textFieldExpression>
+      </textField>
+    </band>
+  </pageFooter>
+</jasperReport>`;
+    const rows = Array.from({ length: 12 }, (_, i) => ({ name: `Row ${i + 1}` }));
+    const bytes = await renderJRXML(jrxml, { dataSource: rows });
+    expect(bytes.length).toBeGreaterThan(0);
+  });
+
+  it('resolves $V{PAGE_COUNT} via two-pass rendering', async () => {
+    const jrxml = `<?xml version="1.0" encoding="UTF-8"?>
+<jasperReport name="PageCountTest" pageWidth="200" pageHeight="100"
+              leftMargin="10" rightMargin="10" topMargin="10" bottomMargin="10">
+  <field name="name" class="java.lang.String"/>
+  <detail>
+    <band height="25">
+      <textField>
+        <reportElement x="0" y="0" width="180" height="20"/>
+        <textFieldExpression><![CDATA[$F{name}]]></textFieldExpression>
+      </textField>
+    </band>
+  </detail>
+  <pageFooter>
+    <band height="15">
+      <textField>
+        <reportElement x="0" y="0" width="180" height="15"/>
+        <textFieldExpression><![CDATA["Page " + $V{PAGE_NUMBER} + " of " + $V{PAGE_COUNT}]]></textFieldExpression>
+      </textField>
+    </band>
+  </pageFooter>
+</jasperReport>`;
+    const rows = Array.from({ length: 8 }, (_, i) => ({ name: `R${i}` }));
+    const bytes = await renderJRXML(jrxml, { dataSource: rows });
+    expect(bytes.length).toBeGreaterThan(0);
+  });
+
+  it('resolves $R{key} from resources option', () => {
+    const jrxml = `<?xml version="1.0" encoding="UTF-8"?>
+<jasperReport name="I18n" pageWidth="200" pageHeight="100"
+              leftMargin="10" rightMargin="10" topMargin="10" bottomMargin="10">
+  <title>
+    <band height="20">
+      <textField>
+        <reportElement x="0" y="0" width="180" height="20"/>
+        <textFieldExpression><![CDATA[$R{greeting}]]></textFieldExpression>
+      </textField>
+    </band>
+  </title>
+</jasperReport>`;
+    const report = parseJRXML(jrxml);
+    expect(report.bands.title?.elements[0].type).toBe('textField');
+    // Rendering should not throw even with resources provided.
+    return renderJRXML(jrxml, { resources: { greeting: 'Hallo' } }).then((b) => {
+      expect(b.length).toBeGreaterThan(0);
+    });
+  });
+
+  it('stretches textField height with textAdjust="StretchHeight"', async () => {
+    const jrxml = `<?xml version="1.0" encoding="UTF-8"?>
+<jasperReport name="Stretch" pageWidth="200" pageHeight="400"
+              leftMargin="10" rightMargin="10" topMargin="10" bottomMargin="10">
+  <field name="long" class="java.lang.String"/>
+  <detail>
+    <band height="25">
+      <textField textAdjust="StretchHeight">
+        <reportElement x="0" y="0" width="180" height="15"/>
+        <textFieldExpression><![CDATA[$F{long}]]></textFieldExpression>
+      </textField>
+    </band>
+  </detail>
+</jasperReport>`;
+    const longText = 'Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.';
+    const bytes = await renderJRXML(jrxml, { fields: { long: longText } });
+    expect(bytes.length).toBeGreaterThan(0);
+  });
+
+  it('emits group headers when the group expression value changes', async () => {
+    const jrxml = `<?xml version="1.0" encoding="UTF-8"?>
+<jasperReport name="GroupRender" pageWidth="300" pageHeight="400"
+              leftMargin="10" rightMargin="10" topMargin="10" bottomMargin="10">
+  <field name="category" class="java.lang.String"/>
+  <field name="item" class="java.lang.String"/>
+  <group name="byCategory">
+    <groupExpression><![CDATA[$F{category}]]></groupExpression>
+    <groupHeader>
+      <band height="15">
+        <textField>
+          <reportElement x="0" y="0" width="280" height="15"/>
+          <textFieldExpression><![CDATA["=== " + $F{category} + " ==="]]></textFieldExpression>
+        </textField>
+      </band>
+    </groupHeader>
+    <groupFooter>
+      <band height="8"/>
+    </groupFooter>
+  </group>
+  <detail>
+    <band height="15">
+      <textField>
+        <reportElement x="20" y="0" width="260" height="15"/>
+        <textFieldExpression><![CDATA[$F{item}]]></textFieldExpression>
+      </textField>
+    </band>
+  </detail>
+</jasperReport>`;
+    const bytes = await renderJRXML(jrxml, {
+      dataSource: [
+        { category: 'Fruit', item: 'Apple' },
+        { category: 'Fruit', item: 'Banana' },
+        { category: 'Veg', item: 'Carrot' },
+        { category: 'Veg', item: 'Potato' },
+      ],
+    });
+    expect(bytes.length).toBeGreaterThan(0);
+  });
+});

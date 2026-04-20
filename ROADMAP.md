@@ -22,15 +22,15 @@ Prioritized list of JRXML features not yet implemented, ordered by effort.
 - [x] 13. `<style>` + style inheritance.
 - [x] 14. Java method shims (`.toUpperCase()`, `.trim()`, `.substring()`, `.toString()`).
 
-## Tier 3 — Medium (v0.5.0 / v0.6.0)
+## Tier 3 — Medium (v0.4.0) ✅ Shipped
 
-- [ ] 15. Automatic multi-page layout (add page on overflow, repeat page/columnHeader).
-- [ ] 16. Dynamic band height (`isStretchWithOverflow`, `textAdjust="StretchHeight"`).
-- [ ] 17. Report variables with `calculation="Sum"/"Count"/"Average"/"Lowest"/"Highest"/"First"`.
-- [ ] 18. `SimpleDateFormat` calls in expressions.
-- [ ] 19. Custom font embedding via `fonts` render option.
-- [ ] 20. Iterable data source — detail band repeats per row. **Biggest semantic unlock.**
-- [ ] 21. Groups (`<group>` + headers/footers). Requires #20.
+- [x] 15. Automatic multi-page layout (add page on overflow, repeat page/columnHeader).
+- [x] 16. Dynamic band height (`isStretchWithOverflow`, `textAdjust="StretchHeight"`).
+- [x] 17. Report variables with `calculation="Sum"/"Count"/"Average"/"Lowest"/"Highest"/"First"`.
+- [x] 18. `SimpleDateFormat` calls in expressions.
+- [x] 19. Custom font embedding via `fonts` render option.
+- [x] 20. Iterable data source — detail band repeats per row. **Biggest semantic unlock.**
+- [x] 21. Groups (`<group>` + headers/footers). Requires #20.
 
 ## Tier 4 — Large (v0.7.0+)
 
@@ -57,7 +57,5 @@ Prioritized list of JRXML features not yet implemented, ordered by effort.
 |---|---|
 | **v0.2.0** | Tier 1 — polish, no breaking changes |
 | **v0.3.0** | Tier 2 — expression engine + styles + box + rotation + markup |
-| **v0.4.0** | Layout extras, remaining Tier 2 polish |
-| **v0.5.0** | Iterable data + multi-page (#15, #16, #20) — the big one |
-| **v0.6.0** | Groups + variable calculations (#17, #21) |
-| **v0.7.0+** | Tier 4 as needs arise |
+| **v0.4.0** | Tier 3 — iterable data + multi-page + groups + variables + custom fonts |
+| **v0.5.0+** | Tier 4 — frames, breaks, columns, subreports, anchors (as needs arise) |
