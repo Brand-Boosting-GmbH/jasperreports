@@ -35,6 +35,16 @@ export interface JRXMLRenderOptions {
     families: Record<string, CustomFontFamily>;
   };
 
+  /**
+   * Resolve a `<subreport>` expression to an already-parsed report plus its
+   * data source. The returned report is rendered inline at the subreport
+   * element position. Return `null` to skip the subreport.
+   */
+  subreportResolver?: (expression: string, context: {
+    parameters: Record<string, unknown>;
+    fields: Record<string, unknown>;
+  }) => Promise<{ report: ParsedReport; dataSource?: Array<Record<string, any>>; fields?: Record<string, any> } | null>;
+
   /** 
    * Image resolver function - returns image bytes for a given path/expression
    * @param path - The image path from the JRXML expression
@@ -69,6 +79,12 @@ export interface ReportConfig {
   topMargin: number;
   bottomMargin: number;
   orientation: 'Portrait' | 'Landscape';
+  /** Number of columns per page (default 1). */
+  columnCount?: number;
+  /** Gap between columns in pt. */
+  columnSpacing?: number;
+  /** Column print order when `columnCount > 1`. */
+  printOrder?: 'Vertical' | 'Horizontal';
 }
 
 /**
@@ -87,6 +103,27 @@ export interface ReportElement {
   printWhenExpression?: string;
   /** Name of a report-level `<style>` to inherit attributes from. */
   style?: string;
+}
+
+/**
+ * Hyperlink / anchor / bookmark metadata attached to text and image elements.
+ */
+export interface ElementLink {
+  /** How the hyperlink resolves when clicked. */
+  hyperlinkType?: 'None' | 'Reference' | 'LocalAnchor' | 'LocalPage' | 'RemoteAnchor' | 'RemotePage';
+  /** Expression producing the URL for `Reference` / `Remote*` types. */
+  hyperlinkReferenceExpression?: string;
+  /** Expression producing the anchor name for `LocalAnchor` / `RemoteAnchor`. */
+  hyperlinkAnchorExpression?: string;
+  /** Expression producing the target page number for `LocalPage` / `RemotePage`. */
+  hyperlinkPageExpression?: string;
+  /** Expression producing the anchor *name* this element defines. */
+  anchorNameExpression?: string;
+  /**
+   * 0 = not a bookmark, 1 = top-level, 2 = child of last level-1, …
+   * Mirrors `<anchorNameExpression bookmarkLevel="N">`.
+   */
+  bookmarkLevel?: number;
 }
 
 /**
@@ -157,6 +194,7 @@ export interface StaticTextElement {
   textStyle: TextStyle;
   text: string;
   box?: BoxStyle;
+  link?: ElementLink;
 }
 
 /**
@@ -173,6 +211,7 @@ export interface TextFieldElement {
   isBlankWhenNull: boolean;
   pattern?: string;
   box?: BoxStyle;
+  link?: ElementLink;
 }
 
 /**
@@ -185,6 +224,7 @@ export interface ImageElement {
   scaleImage?: 'Clip' | 'FillFrame' | 'RetainShape';
   hAlign?: 'Left' | 'Center' | 'Right';
   vAlign?: 'Top' | 'Middle' | 'Bottom';
+  link?: ElementLink;
 }
 
 /**
@@ -227,15 +267,53 @@ export interface EllipseElement {
 }
 
 /**
+ * Frame element — a rectangular container whose `x`/`y` origin is the
+ * reference for its nested child elements' coordinates.
+ */
+export interface FrameElement {
+  type: 'frame';
+  reportElement: ReportElement;
+  box?: BoxStyle;
+  children: BandElement[];
+}
+
+/**
+ * Page or column break — pushes subsequent output onto the next page/column.
+ */
+export interface BreakElement {
+  type: 'break';
+  reportElement: ReportElement;
+  breakType?: 'Page' | 'Column';
+}
+
+/**
+ * Inline subreport. The `subreportExpression` is not resolved by this
+ * library at runtime (we have no file system); instead a `subreportResolver`
+ * render option supplies the already-parsed sub-report and its data source.
+ */
+export interface SubreportElement {
+  type: 'subreport';
+  reportElement: ReportElement;
+  expression: string;
+  /** Expression for the data source used by the sub-report (opaque). */
+  dataSourceExpression?: string;
+  /** Inline `<subreportParameter>` bindings keyed by name. */
+  parameters: Array<{ name: string; expression: string }>;
+}
+
+/**
  * Union type for all band elements
  */
-export type BandElement = 
-  | StaticTextElement 
-  | TextFieldElement 
-  | ImageElement 
-  | LineElement 
-  | RectangleElement 
-  | EllipseElement;
+export type BandElement =
+  | StaticTextElement
+  | TextFieldElement
+  | ImageElement
+  | LineElement
+  | RectangleElement
+  | EllipseElement
+  | FrameElement
+  | BreakElement
+  | SubreportElement;
 
 /**
  * Report band (section)

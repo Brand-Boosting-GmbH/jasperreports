@@ -37,6 +37,11 @@ export class ExpressionEvaluator {
     this.variables = { ...this.variables, ...variables };
   }
 
+  /** Snapshot of the current field values (used by subreports). */
+  getFieldsSnapshot(): Record<string, unknown> {
+    return { ...this.fields };
+  }
+
   evaluate(expression: string): unknown {
     if (!expression) return '';
     const src = expression.replace(/<!\[CDATA\[/g, '').replace(/\]\]>/g, '').trim();

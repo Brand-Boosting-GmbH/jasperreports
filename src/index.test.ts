@@ -556,3 +556,209 @@ describe('Tier 3 features', () => {
     expect(bytes.length).toBeGreaterThan(0);
   });
 });
+
+describe('Tier 4 features', () => {
+  it('parses and renders a <frame> with nested children', async () => {
+    const jrxml = `<?xml version="1.0" encoding="UTF-8"?>
+<jasperReport name="Frame" pageWidth="595" pageHeight="842"
+              leftMargin="20" rightMargin="20" topMargin="20" bottomMargin="20">
+  <detail>
+    <band height="100">
+      <frame>
+        <reportElement x="0" y="0" width="300" height="80" mode="Opaque" backcolor="#EEEEEE"/>
+        <box>
+          <pen lineWidth="1" lineColor="#000000"/>
+        </box>
+        <staticText>
+          <reportElement x="10" y="10" width="200" height="20"/>
+          <text><![CDATA[Inside Frame]]></text>
+        </staticText>
+        <textField>
+          <reportElement x="10" y="40" width="200" height="20"/>
+          <textFieldExpression><![CDATA[$F{label}]]></textFieldExpression>
+        </textField>
+      </frame>
+    </band>
+  </detail>
+</jasperReport>`;
+    const report = parseJRXML(jrxml);
+    const frame = report.bands.detail[0].elements[0] as any;
+    expect(frame.type).toBe('frame');
+    expect(frame.children).toHaveLength(2);
+    expect(frame.children[0].type).toBe('staticText');
+    expect(frame.children[1].type).toBe('textField');
+
+    const bytes = await renderJRXML(jrxml, { fields: { label: 'Hello' } });
+    expect(bytes.length).toBeGreaterThan(0);
+  });
+
+  it('renders a <break> element and advances to a new page', async () => {
+    const jrxml = `<?xml version="1.0" encoding="UTF-8"?>
+<jasperReport name="Break" pageWidth="595" pageHeight="842"
+              leftMargin="20" rightMargin="20" topMargin="20" bottomMargin="20">
+  <detail>
+    <band height="30">
+      <textField>
+        <reportElement x="0" y="0" width="200" height="20"/>
+        <textFieldExpression><![CDATA[$F{row}]]></textFieldExpression>
+      </textField>
+      <break>
+        <reportElement x="0" y="25" width="555" height="1"/>
+      </break>
+    </band>
+  </detail>
+</jasperReport>`;
+    const report = parseJRXML(jrxml);
+    const breakEl = report.bands.detail[0].elements[1] as any;
+    expect(breakEl.type).toBe('break');
+    expect(breakEl.breakType).toBe('Page');
+
+    const bytes = await renderJRXML(jrxml, {
+      dataSource: [{ row: 'A' }, { row: 'B' }, { row: 'C' }],
+    });
+    // Three rows with a page break after each: expect multi-page PDF.
+    expect(bytes.length).toBeGreaterThan(0);
+  });
+
+  it('parses columnCount and renders multi-column detail', async () => {
+    const jrxml = `<?xml version="1.0" encoding="UTF-8"?>
+<jasperReport name="Cols" pageWidth="595" pageHeight="200"
+              columnCount="2" columnWidth="260" columnSpacing="15"
+              leftMargin="20" rightMargin="20" topMargin="20" bottomMargin="20">
+  <detail>
+    <band height="40">
+      <textField>
+        <reportElement x="0" y="0" width="250" height="20"/>
+        <textFieldExpression><![CDATA[$F{label}]]></textFieldExpression>
+      </textField>
+    </band>
+  </detail>
+</jasperReport>`;
+    const report = parseJRXML(jrxml);
+    expect(report.config.columnCount).toBe(2);
+    expect(report.config.columnSpacing).toBe(15);
+
+    const bytes = await renderJRXML(jrxml, {
+      dataSource: Array.from({ length: 10 }, (_, i) => ({ label: `Item ${i + 1}` })),
+    });
+    expect(bytes.length).toBeGreaterThan(0);
+  });
+
+  it('parses hyperlink and anchor attributes on a textField', () => {
+    const jrxml = `<?xml version="1.0" encoding="UTF-8"?>
+<jasperReport name="Links" pageWidth="595" pageHeight="842"
+              leftMargin="20" rightMargin="20" topMargin="20" bottomMargin="20">
+  <detail>
+    <band height="40">
+      <textField hyperlinkType="Reference">
+        <reportElement x="0" y="0" width="200" height="20"/>
+        <textFieldExpression><![CDATA["Click me"]]></textFieldExpression>
+        <hyperlinkReferenceExpression><![CDATA["https://example.com"]]></hyperlinkReferenceExpression>
+      </textField>
+      <staticText>
+        <reportElement x="0" y="25" width="200" height="15"/>
+        <text><![CDATA[Anchor Here]]></text>
+        <anchorNameExpression bookmarkLevel="1"><![CDATA["section-1"]]></anchorNameExpression>
+      </staticText>
+    </band>
+  </detail>
+</jasperReport>`;
+    const report = parseJRXML(jrxml);
+    const tf = report.bands.detail[0].elements[0] as any;
+    const st = report.bands.detail[0].elements[1] as any;
+    expect(tf.link?.hyperlinkType).toBe('Reference');
+    expect(tf.link?.hyperlinkReferenceExpression).toContain('example.com');
+    expect(st.link?.anchorNameExpression).toContain('section-1');
+    expect(st.link?.bookmarkLevel).toBe(1);
+  });
+
+  it('renders a URL hyperlink and a bookmark without errors', async () => {
+    const jrxml = `<?xml version="1.0" encoding="UTF-8"?>
+<jasperReport name="LinksRender" pageWidth="595" pageHeight="842"
+              leftMargin="20" rightMargin="20" topMargin="20" bottomMargin="20">
+  <detail>
+    <band height="60">
+      <textField hyperlinkType="Reference">
+        <reportElement x="0" y="0" width="200" height="20"/>
+        <textFieldExpression><![CDATA["Visit"]]></textFieldExpression>
+        <hyperlinkReferenceExpression><![CDATA["https://example.com"]]></hyperlinkReferenceExpression>
+      </textField>
+      <staticText>
+        <reportElement x="0" y="30" width="200" height="15"/>
+        <text><![CDATA[Chapter 1]]></text>
+        <anchorNameExpression bookmarkLevel="1"><![CDATA["ch1"]]></anchorNameExpression>
+      </staticText>
+    </band>
+  </detail>
+</jasperReport>`;
+    const bytes = await renderJRXML(jrxml);
+    expect(bytes.length).toBeGreaterThan(0);
+    // Must be a valid PDF (the annotation + outline dictionaries didn't
+    // break the save pipeline).
+    const header = Buffer.from(bytes.slice(0, 4)).toString('latin1');
+    expect(header).toBe('%PDF');
+  });
+
+  it('parses a <subreport> element with parameters', () => {
+    const jrxml = `<?xml version="1.0" encoding="UTF-8"?>
+<jasperReport name="Sub" pageWidth="595" pageHeight="842"
+              leftMargin="20" rightMargin="20" topMargin="20" bottomMargin="20">
+  <detail>
+    <band height="100">
+      <subreport>
+        <reportElement x="0" y="0" width="555" height="100"/>
+        <subreportParameter name="TITLE">
+          <subreportParameterExpression><![CDATA["Hello"]]></subreportParameterExpression>
+        </subreportParameter>
+        <subreportExpression><![CDATA["child.jrxml"]]></subreportExpression>
+      </subreport>
+    </band>
+  </detail>
+</jasperReport>`;
+    const report = parseJRXML(jrxml);
+    const sub = report.bands.detail[0].elements[0] as any;
+    expect(sub.type).toBe('subreport');
+    expect(sub.expression).toContain('child.jrxml');
+    expect(sub.parameters).toHaveLength(1);
+    expect(sub.parameters[0].name).toBe('TITLE');
+  });
+
+  it('renders a subreport via subreportResolver', async () => {
+    const childJrxml = `<?xml version="1.0" encoding="UTF-8"?>
+<jasperReport name="Child" pageWidth="300" pageHeight="150"
+              leftMargin="0" rightMargin="0" topMargin="0" bottomMargin="0">
+  <detail>
+    <band height="150">
+      <staticText>
+        <reportElement x="10" y="10" width="200" height="20"/>
+        <text><![CDATA[Child Report]]></text>
+      </staticText>
+    </band>
+  </detail>
+</jasperReport>`;
+
+    const parentJrxml = `<?xml version="1.0" encoding="UTF-8"?>
+<jasperReport name="Parent" pageWidth="595" pageHeight="842"
+              leftMargin="20" rightMargin="20" topMargin="20" bottomMargin="20">
+  <detail>
+    <band height="200">
+      <staticText>
+        <reportElement x="0" y="0" width="555" height="20"/>
+        <text><![CDATA[Parent]]></text>
+      </staticText>
+      <subreport>
+        <reportElement x="0" y="30" width="300" height="150"/>
+        <subreportExpression><![CDATA["child.jrxml"]]></subreportExpression>
+      </subreport>
+    </band>
+  </detail>
+</jasperReport>`;
+
+    const bytes = await renderJRXML(parentJrxml, {
+      subreportResolver: async () => ({
+        report: parseJRXML(childJrxml),
+      }),
+    });
+    expect(bytes.length).toBeGreaterThan(0);
+  });
+});

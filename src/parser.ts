@@ -2,7 +2,23 @@
  * JRXML Parser and Renderer
  */
 
-import { PDFDocument, StandardFonts, rgb, PDFFont, PDFPage, PDFImage, degrees } from 'pdf-lib';
+import {
+  PDFDocument,
+  StandardFonts,
+  rgb,
+  PDFFont,
+  PDFPage,
+  PDFImage,
+  degrees,
+  PDFName,
+  PDFString,
+  PDFHexString,
+  PDFArray,
+  PDFNumber,
+  PDFDict,
+  PDFRef,
+  PDFEmbeddedPage,
+} from 'pdf-lib';
 import { XMLParser } from './xml-parser';
 import { ExpressionEvaluator } from './expression';
 import { formatPattern, isTruthyPrintWhen } from './format';
@@ -26,6 +42,10 @@ import type {
   BoxPen,
   ReportGroup,
   ReportVariable,
+  FrameElement,
+  BreakElement,
+  SubreportElement,
+  ElementLink,
 } from './types';
 
 // Re-export for library users
@@ -88,6 +108,9 @@ export class JRXMLParser {
       topMargin: XMLParser.getAttrInt(root, 'topMargin', 20),
       bottomMargin: XMLParser.getAttrInt(root, 'bottomMargin', 20),
       orientation: XMLParser.getAttr(root, 'orientation', 'Portrait') as 'Portrait' | 'Landscape',
+      columnCount: XMLParser.getAttrInt(root, 'columnCount', 1),
+      columnSpacing: XMLParser.getAttrInt(root, 'columnSpacing', 0),
+      printOrder: (XMLParser.getAttr(root, 'printOrder', 'Vertical') as 'Vertical' | 'Horizontal'),
     };
   }
 
@@ -280,6 +303,9 @@ export class JRXMLParser {
       case 'line': return this.parseLine(el);
       case 'rectangle': return this.parseRectangle(el);
       case 'ellipse': return this.parseEllipse(el);
+      case 'frame': return this.parseFrame(el);
+      case 'break': return this.parseBreak(el);
+      case 'subreport': return this.parseSubreport(el);
       default: return null;
     }
   }
@@ -374,6 +400,7 @@ export class JRXMLParser {
       textStyle: this.parseTextStyle(el),
       text: textEl ? XMLParser.getText(textEl) : '',
       box: this.resolveBox(el),
+      link: this.parseLink(el),
     };
   }
 
@@ -390,6 +417,7 @@ export class JRXMLParser {
       isBlankWhenNull: XMLParser.getAttrBool(el, 'isBlankWhenNull', false),
       pattern: XMLParser.getAttr(el, 'pattern') || inherited?.pattern || undefined,
       box: this.resolveBox(el),
+      link: this.parseLink(el),
     };
   }
 
@@ -402,6 +430,7 @@ export class JRXMLParser {
       scaleImage: XMLParser.getAttr(el, 'scaleImage') as ImageElement['scaleImage'],
       hAlign: XMLParser.getAttr(el, 'hAlign') as ImageElement['hAlign'],
       vAlign: XMLParser.getAttr(el, 'vAlign') as ImageElement['vAlign'],
+      link: this.parseLink(el),
     };
   }
 
@@ -449,6 +478,81 @@ export class JRXMLParser {
       } : undefined,
     };
   }
+
+  /**
+   * Recursively parse a `<frame>` and its nested children. Child elements'
+   * coordinates are relative to the frame; the renderer applies the offset.
+   */
+  private parseFrame(el: XMLElement): FrameElement {
+    const children: BandElement[] = [];
+    for (const child of el.children) {
+      if (child.tagName === 'reportElement' || child.tagName === 'box') continue;
+      const parsed = this.parseElement(child);
+      if (parsed) children.push(parsed);
+    }
+    return {
+      type: 'frame',
+      reportElement: this.parseReportElement(el),
+      box: this.resolveBox(el),
+      children,
+    };
+  }
+
+  private parseBreak(el: XMLElement): BreakElement {
+    return {
+      type: 'break',
+      reportElement: this.parseReportElement(el),
+      breakType: (XMLParser.getAttr(el, 'type', 'Page') as 'Page' | 'Column'),
+    };
+  }
+
+  private parseSubreport(el: XMLElement): SubreportElement {
+    const exprEl = XMLParser.getChild(el, 'subreportExpression');
+    const dsEl = XMLParser.getChild(el, 'dataSourceExpression');
+    const params: Array<{ name: string; expression: string }> = [];
+    for (const p of XMLParser.getChildren(el, 'subreportParameter')) {
+      const name = XMLParser.getAttr(p, 'name');
+      const pExpr = XMLParser.getChild(p, 'subreportParameterExpression');
+      if (name && pExpr) {
+        params.push({ name, expression: XMLParser.getText(pExpr) });
+      }
+    }
+    return {
+      type: 'subreport',
+      reportElement: this.parseReportElement(el),
+      expression: exprEl ? XMLParser.getText(exprEl) : '',
+      dataSourceExpression: dsEl ? XMLParser.getText(dsEl) : undefined,
+      parameters: params,
+    };
+  }
+
+  /**
+   * Parse hyperlink / anchor attributes from an element. Returns undefined
+   * when no link-related attributes are present.
+   */
+  private parseLink(el: XMLElement): ElementLink | undefined {
+    const hyperlinkType = XMLParser.getAttr(el, 'hyperlinkType');
+    const anchorExpr = XMLParser.getChild(el, 'anchorNameExpression');
+    const refExpr = XMLParser.getChild(el, 'hyperlinkReferenceExpression');
+    const anchorRefExpr = XMLParser.getChild(el, 'hyperlinkAnchorExpression');
+    const pageExpr = XMLParser.getChild(el, 'hyperlinkPageExpression');
+
+    if (!hyperlinkType && !anchorExpr && !refExpr && !anchorRefExpr && !pageExpr) {
+      return undefined;
+    }
+
+    const link: ElementLink = {};
+    if (hyperlinkType) link.hyperlinkType = hyperlinkType as ElementLink['hyperlinkType'];
+    if (refExpr) link.hyperlinkReferenceExpression = XMLParser.getText(refExpr);
+    if (anchorRefExpr) link.hyperlinkAnchorExpression = XMLParser.getText(anchorRefExpr);
+    if (pageExpr) link.hyperlinkPageExpression = XMLParser.getText(pageExpr);
+    if (anchorExpr) {
+      link.anchorNameExpression = XMLParser.getText(anchorExpr);
+      const bookmarkLevel = anchorExpr.attributes['bookmarkLevel'];
+      if (bookmarkLevel !== undefined) link.bookmarkLevel = parseInt(bookmarkLevel, 10) || 0;
+    }
+    return link;
+  }
 }
 
 /**
@@ -479,6 +583,28 @@ export class JRXMLRenderer {
   private groupPrevValues: Map<string, unknown> = new Map();
   private groupRowCounts: Map<string, number> = new Map();
 
+  // Multi-column state.
+  private currentColumn = 0;
+  private columnCount = 1;
+  private columnWidth = 0;
+  private columnSpacing = 0;
+  private columnTopY = 0;
+
+  // Hyperlink / anchor / bookmark state.
+  private anchors: Map<string, { page: PDFPage; x: number; y: number }> = new Map();
+  private pendingLocalLinks: Array<{
+    page: PDFPage;
+    rect: [number, number, number, number];
+    anchorName: string;
+  }> = [];
+  private bookmarks: Array<{
+    title: string;
+    page: PDFPage;
+    x: number;
+    y: number;
+    level: number;
+  }> = [];
+
   /**
    * Render a parsed report to PDF
    */
@@ -494,6 +620,8 @@ export class JRXMLRenderer {
       this.totalPages = this.pageNumber;
     }
     await this.renderPass(this.totalPages);
+
+    this.finalizeLinksAndBookmarks();
 
     return await this.pdfDoc.save();
   }
@@ -516,6 +644,13 @@ export class JRXMLRenderer {
     this.variableCounts.clear();
     this.groupPrevValues.clear();
     this.groupRowCounts.clear();
+    this.anchors.clear();
+    this.pendingLocalLinks = [];
+    this.bookmarks = [];
+    this.currentColumn = 0;
+    this.columnCount = Math.max(1, this.report.config.columnCount ?? 1);
+    this.columnWidth = this.report.config.columnWidth;
+    this.columnSpacing = this.report.config.columnSpacing ?? 0;
     this.resetEvaluator(this.rows[0] ?? {}, knownTotalPages);
     this.initVariables();
 
@@ -527,6 +662,7 @@ export class JRXMLRenderer {
     if (this.report.bands.title) await this.renderBand(this.report.bands.title);
     if (this.report.bands.pageHeader) await this.renderBand(this.report.bands.pageHeader);
     if (this.report.bands.columnHeader) await this.renderBand(this.report.bands.columnHeader);
+    this.columnTopY = this.currentY;
 
     // Detail iteration — one pass per row, with groups + variables.
     for (let i = 0; i < this.rows.length; i++) {
@@ -724,13 +860,19 @@ export class JRXMLRenderer {
   }
 
   /**
-   * Ensure `requiredHeight` fits on the current page; otherwise start a new
-   * page (drawing the page footer and repeating page/column headers).
+   * Ensure `requiredHeight` fits in the current column; otherwise advance
+   * to the next column, or start a new page when columns are exhausted.
    */
   private async ensureSpace(requiredHeight: number): Promise<void> {
     const footerHeight = this.report.bands.pageFooter?.height ?? 0;
     const floor = this.report.config.bottomMargin + footerHeight;
     if (this.currentY - requiredHeight >= floor) return;
+    if (this.currentColumn + 1 < this.columnCount) {
+      // Advance to next column on the same page.
+      this.currentColumn++;
+      this.currentY = this.columnTopY;
+      return;
+    }
     await this.startNewPage();
   }
 
@@ -740,6 +882,7 @@ export class JRXMLRenderer {
 
     // Open a new page.
     this.pageNumber++;
+    this.currentColumn = 0;
     this.resetPageVariables();
     const { pageWidth, pageHeight } = this.report.config;
     this.page = this.pdfDoc.addPage([pageWidth, pageHeight]);
@@ -758,6 +901,7 @@ export class JRXMLRenderer {
         this.currentY -= g.header.height;
       }
     }
+    this.columnTopY = this.currentY;
   }
 
   private async drawPageFooter(): Promise<void> {
@@ -907,13 +1051,14 @@ export class JRXMLRenderer {
     return maxBottomOffset;
   }
 
-  private async renderBandAtY(band: Band, bandTopY: number): Promise<void> {
+  private async renderBandAtY(band: Band, bandTopY: number, xOffset?: number): Promise<void> {
+    const effectiveXOffset = xOffset ?? (this.currentColumn * (this.columnWidth + this.columnSpacing));
     for (const element of band.elements) {
-      await this.renderElement(element, bandTopY);
+      await this.renderElement(element, bandTopY, effectiveXOffset);
     }
   }
 
-  private async renderElement(element: BandElement, bandTopY: number): Promise<void> {
+  private async renderElement(element: BandElement, bandTopY: number, xOffset: number = 0): Promise<void> {
     // Gate rendering on `printWhenExpression` if provided.
     const pwe = element.reportElement.printWhenExpression;
     if (pwe) {
@@ -923,32 +1068,42 @@ export class JRXMLRenderer {
 
     switch (element.type) {
       case 'staticText':
-        await this.renderStaticText(element, bandTopY);
+        await this.renderStaticText(element, bandTopY, xOffset);
         break;
       case 'textField':
-        await this.renderTextField(element, bandTopY);
+        await this.renderTextField(element, bandTopY, xOffset);
         break;
       case 'image':
-        await this.renderImage(element, bandTopY);
+        await this.renderImage(element, bandTopY, xOffset);
         break;
       case 'line':
-        await this.renderLine(element, bandTopY);
+        await this.renderLine(element, bandTopY, xOffset);
         break;
       case 'rectangle':
-        await this.renderRectangle(element, bandTopY);
+        await this.renderRectangle(element, bandTopY, xOffset);
         break;
       case 'ellipse':
-        await this.renderEllipse(element, bandTopY);
+        await this.renderEllipse(element, bandTopY, xOffset);
+        break;
+      case 'frame':
+        await this.renderFrame(element, bandTopY, xOffset);
+        break;
+      case 'break':
+        await this.renderBreak(element);
+        break;
+      case 'subreport':
+        await this.renderSubreport(element, bandTopY, xOffset);
         break;
     }
   }
 
-  private async renderStaticText(element: StaticTextElement, bandTopY: number): Promise<void> {
-    this.drawBox(element.reportElement, element.box, bandTopY);
-    await this.drawText(element.text, element.reportElement, element.textStyle, bandTopY, element.box);
+  private async renderStaticText(element: StaticTextElement, bandTopY: number, xOffset: number = 0): Promise<void> {
+    this.drawBox(element.reportElement, element.box, bandTopY, xOffset);
+    await this.drawText(element.text, element.reportElement, element.textStyle, bandTopY, element.box, xOffset);
+    this.applyLink(element.link, element.reportElement, bandTopY, xOffset, element.text);
   }
 
-  private async renderTextField(element: TextFieldElement, bandTopY: number): Promise<void> {
+  private async renderTextField(element: TextFieldElement, bandTopY: number, xOffset: number = 0): Promise<void> {
     const raw = this.evaluator.evaluate(element.expression);
 
     if ((raw === null || raw === undefined || raw === '') && element.isBlankWhenNull) {
@@ -975,8 +1130,9 @@ export class JRXMLRenderer {
       }
     }
 
-    this.drawBox(reportElement, element.box, bandTopY);
-    await this.drawText(text, reportElement, element.textStyle, bandTopY, element.box);
+    this.drawBox(reportElement, element.box, bandTopY, xOffset);
+    await this.drawText(text, reportElement, element.textStyle, bandTopY, element.box, xOffset);
+    this.applyLink(element.link, reportElement, bandTopY, xOffset, text);
   }
 
   private async drawText(
@@ -985,6 +1141,7 @@ export class JRXMLRenderer {
     textStyle: TextStyle,
     bandTopY: number,
     box?: BoxStyle,
+    xOffset: number = 0,
   ): Promise<void> {
     if (!text) return;
 
@@ -998,7 +1155,7 @@ export class JRXMLRenderer {
     const padTop = box?.topPadding ?? 0;
     const padBottom = box?.bottomPadding ?? 0;
 
-    const x = this.report.config.leftMargin + reportElement.x + padLeft;
+    const x = this.report.config.leftMargin + reportElement.x + xOffset + padLeft;
     const elementTopY = bandTopY - reportElement.y - padTop;
     const elementBottomY = elementTopY - (reportElement.height - padTop - padBottom);
     const contentWidth = reportElement.width - padLeft - padRight;
@@ -1147,10 +1304,10 @@ export class JRXMLRenderer {
    * Draw the four box borders (if defined). Backcolor fill is handled by
    * the existing report-element rendering path; this only draws the pens.
    */
-  private drawBox(re: ReportElement, box: BoxStyle | undefined, bandTopY: number): void {
+  private drawBox(re: ReportElement, box: BoxStyle | undefined, bandTopY: number, xOffset: number = 0): void {
     if (!box) return;
 
-    const x = this.report.config.leftMargin + re.x;
+    const x = this.report.config.leftMargin + re.x + xOffset;
     const y = bandTopY - re.y - re.height;
     const w = re.width;
     const h = re.height;
@@ -1197,7 +1354,7 @@ export class JRXMLRenderer {
     return lines.length > 0 ? lines : [''];
   }
 
-  private async renderImage(element: ImageElement, bandTopY: number): Promise<void> {
+  private async renderImage(element: ImageElement, bandTopY: number, xOffset: number = 0): Promise<void> {
     const resolved = this.evaluator.evaluate(element.expression);
     if (resolved === null || resolved === undefined || resolved === '') return;
     const imagePath = String(resolved);
@@ -1221,7 +1378,7 @@ export class JRXMLRenderer {
       }
     }
 
-    const boxX = this.report.config.leftMargin + element.reportElement.x;
+    const boxX = this.report.config.leftMargin + element.reportElement.x + xOffset;
     const boxY = bandTopY - element.reportElement.y - element.reportElement.height;
     const boxW = element.reportElement.width;
     const boxH = element.reportElement.height;
@@ -1257,12 +1414,13 @@ export class JRXMLRenderer {
     else if (vAlign === 'Bottom') y = boxY;
 
     this.page.drawImage(image, { x, y, width: drawW, height: drawH });
+    this.applyLink(element.link, element.reportElement, bandTopY, xOffset);
   }
 
-  private async renderLine(element: LineElement, bandTopY: number): Promise<void> {
+  private async renderLine(element: LineElement, bandTopY: number, xOffset: number = 0): Promise<void> {
     const { reportElement, pen, direction } = element;
 
-    const x1 = this.report.config.leftMargin + reportElement.x;
+    const x1 = this.report.config.leftMargin + reportElement.x + xOffset;
     const y1 = bandTopY - reportElement.y;
     const x2 = x1 + reportElement.width;
     const y2 = y1 - reportElement.height;
@@ -1292,10 +1450,10 @@ export class JRXMLRenderer {
     }
   }
 
-  private async renderRectangle(element: RectangleElement, bandTopY: number): Promise<void> {
+  private async renderRectangle(element: RectangleElement, bandTopY: number, xOffset: number = 0): Promise<void> {
     const { reportElement, pen } = element;
 
-    const x = this.report.config.leftMargin + reportElement.x;
+    const x = this.report.config.leftMargin + reportElement.x + xOffset;
     const y = bandTopY - reportElement.y - reportElement.height;
     const width = reportElement.width;
     const height = reportElement.height;
@@ -1310,10 +1468,10 @@ export class JRXMLRenderer {
     this.page.drawRectangle({ x, y, width, height, borderColor, borderWidth });
   }
 
-  private async renderEllipse(element: EllipseElement, bandTopY: number): Promise<void> {
+  private async renderEllipse(element: EllipseElement, bandTopY: number, xOffset: number = 0): Promise<void> {
     const { reportElement, pen } = element;
 
-    const centerX = this.report.config.leftMargin + reportElement.x + reportElement.width / 2;
+    const centerX = this.report.config.leftMargin + reportElement.x + xOffset + reportElement.width / 2;
     const centerY = bandTopY - reportElement.y - reportElement.height / 2;
 
     const borderColor = pen ? this.parseColor(pen.lineColor) : rgb(0, 0, 0);
@@ -1337,6 +1495,238 @@ export class JRXMLRenderer {
       borderColor,
       borderWidth,
     });
+  }
+
+  // ==========================================================
+  // Tier 4: Frame, Break, Subreport, Hyperlinks, Bookmarks
+  // ==========================================================
+
+  /**
+   * Render a `<frame>` and its children. Frame coordinates are in band
+   * space; children are positioned relative to the frame's top-left corner.
+   */
+  private async renderFrame(element: FrameElement, bandTopY: number, xOffset: number = 0): Promise<void> {
+    const re = element.reportElement;
+
+    // Draw frame background + borders.
+    if (re.mode === 'Opaque' && re.backcolor) {
+      const x = this.report.config.leftMargin + re.x + xOffset;
+      const y = bandTopY - re.y - re.height;
+      this.page.drawRectangle({
+        x, y, width: re.width, height: re.height,
+        color: this.parseColor(re.backcolor),
+      });
+    }
+    this.drawBox(re, element.box, bandTopY, xOffset);
+
+    // Children render with an adjusted band-top and x-offset so their
+    // own (x, y) coordinates stay relative to the frame.
+    const childBandTopY = bandTopY - re.y;
+    const childXOffset = xOffset + re.x;
+    for (const child of element.children) {
+      await this.renderElement(child, childBandTopY, childXOffset);
+    }
+  }
+
+  /**
+   * A `<break>` element forces a page or column break. Column breaks fall
+   * back to a page break when no columns remain.
+   */
+  private async renderBreak(element: BreakElement): Promise<void> {
+    if (element.breakType === 'Column' && this.currentColumn + 1 < this.columnCount) {
+      this.currentColumn++;
+      this.currentY = this.columnTopY;
+      return;
+    }
+    await this.startNewPage();
+  }
+
+  /**
+   * Render a subreport by invoking the user-supplied `subreportResolver`,
+   * rendering the nested report into a standalone PDF, and embedding its
+   * first page at the subreport's rectangle.
+   */
+  private async renderSubreport(element: SubreportElement, bandTopY: number, xOffset: number = 0): Promise<void> {
+    const resolver = this.options.subreportResolver;
+    if (!resolver) return;
+
+    // Evaluate subreport parameter expressions.
+    const params: Record<string, unknown> = {};
+    for (const p of element.parameters) {
+      params[p.name] = this.evaluator.evaluate(p.expression);
+    }
+
+    const resolved = await resolver(element.expression, {
+      parameters: params,
+      fields: this.evaluator.getFieldsSnapshot?.() ?? {},
+    });
+    if (!resolved) return;
+
+    const nested = new JRXMLRenderer();
+    const subBytes = await nested.render(resolved.report, {
+      ...this.options,
+      parameters: { ...(this.options.parameters || {}), ...params },
+      dataSource: resolved.dataSource,
+      fields: resolved.fields ?? this.options.fields,
+      // Avoid infinite recursion by keeping the same resolver available.
+      subreportResolver: this.options.subreportResolver,
+    });
+
+    let embedded: PDFEmbeddedPage[];
+    try {
+      embedded = await this.pdfDoc.embedPdf(subBytes);
+    } catch {
+      return;
+    }
+    if (embedded.length === 0) return;
+
+    const re = element.reportElement;
+    const x = this.report.config.leftMargin + re.x + xOffset;
+    const y = bandTopY - re.y - re.height;
+    this.page.drawPage(embedded[0], { x, y, width: re.width, height: re.height });
+  }
+
+  /**
+   * Attach a hyperlink / anchor / bookmark to the given rectangle.
+   */
+  private applyLink(
+    link: ElementLink | undefined,
+    re: ReportElement,
+    bandTopY: number,
+    xOffset: number,
+    textForBookmark?: string,
+  ): void {
+    if (!link) return;
+
+    const x1 = this.report.config.leftMargin + re.x + xOffset;
+    const y2 = bandTopY - re.y;
+    const x2 = x1 + re.width;
+    const y1 = y2 - re.height;
+    const rect: [number, number, number, number] = [x1, y1, x2, y2];
+
+    // Anchor / bookmark.
+    if (link.anchorNameExpression) {
+      const name = String(this.evaluator.evaluate(link.anchorNameExpression) ?? '');
+      if (name) {
+        this.anchors.set(name, { page: this.page, x: x1, y: y2 });
+        if (link.bookmarkLevel !== undefined && link.bookmarkLevel > 0) {
+          this.bookmarks.push({
+            title: textForBookmark || name,
+            page: this.page,
+            x: x1,
+            y: y2,
+            level: link.bookmarkLevel,
+          });
+        }
+      }
+    }
+
+    // Hyperlink.
+    const type = link.hyperlinkType;
+    if (type === 'Reference' && link.hyperlinkReferenceExpression) {
+      const url = String(this.evaluator.evaluate(link.hyperlinkReferenceExpression) ?? '');
+      if (url) this.addUrlAnnotation(this.page, rect, url);
+    } else if (type === 'LocalAnchor' && link.hyperlinkAnchorExpression) {
+      const anchor = String(this.evaluator.evaluate(link.hyperlinkAnchorExpression) ?? '');
+      if (anchor) this.pendingLocalLinks.push({ page: this.page, rect, anchorName: anchor });
+    }
+  }
+
+  private addUrlAnnotation(page: PDFPage, rect: [number, number, number, number], url: string): void {
+    const ctx = this.pdfDoc.context;
+    const annot = ctx.obj({
+      Type: 'Annot',
+      Subtype: 'Link',
+      Rect: rect,
+      Border: [0, 0, 0],
+      A: { Type: 'Action', S: 'URI', URI: PDFString.of(url) },
+    });
+    this.appendAnnotation(page, annot);
+  }
+
+  private addGoToAnnotation(
+    page: PDFPage,
+    rect: [number, number, number, number],
+    targetPage: PDFPage,
+    targetX: number,
+    targetY: number,
+  ): void {
+    const ctx = this.pdfDoc.context;
+    const dest = ctx.obj([
+      targetPage.ref,
+      PDFName.of('XYZ'),
+      PDFNumber.of(targetX),
+      PDFNumber.of(targetY),
+      PDFNumber.of(0),
+    ]);
+    const annot = ctx.obj({
+      Type: 'Annot',
+      Subtype: 'Link',
+      Rect: rect,
+      Border: [0, 0, 0],
+      Dest: dest,
+    });
+    this.appendAnnotation(page, annot);
+  }
+
+  private appendAnnotation(page: PDFPage, annot: PDFDict | PDFRef): void {
+    const pageNode = page.node;
+    const existing = pageNode.lookup(PDFName.of('Annots'));
+    if (existing instanceof PDFArray) {
+      existing.push(annot);
+    } else {
+      pageNode.set(PDFName.of('Annots'), this.pdfDoc.context.obj([annot]));
+    }
+  }
+
+  /**
+   * Resolve any pending LocalAnchor links and emit bookmarks as a flat
+   * outline tree. Called after the final render pass, before save.
+   */
+  private finalizeLinksAndBookmarks(): void {
+    // Local-anchor GoTo links.
+    for (const pending of this.pendingLocalLinks) {
+      const target = this.anchors.get(pending.anchorName);
+      if (!target) continue;
+      this.addGoToAnnotation(pending.page, pending.rect, target.page, target.x, target.y);
+    }
+
+    // Outline / bookmarks.
+    if (this.bookmarks.length === 0) return;
+    const ctx = this.pdfDoc.context;
+
+    const outlineRoot = ctx.obj({ Type: 'Outlines' });
+    const outlineRootRef = ctx.register(outlineRoot);
+
+    const itemRefs: PDFRef[] = [];
+    for (const bm of this.bookmarks) {
+      const dest = ctx.obj([
+        bm.page.ref,
+        PDFName.of('XYZ'),
+        PDFNumber.of(bm.x),
+        PDFNumber.of(bm.y),
+        PDFNumber.of(0),
+      ]);
+      const item = ctx.obj({
+        Title: PDFHexString.fromText(bm.title),
+        Parent: outlineRootRef,
+        Dest: dest,
+      });
+      itemRefs.push(ctx.register(item));
+    }
+
+    // Link siblings via Next / Prev.
+    for (let i = 0; i < itemRefs.length; i++) {
+      const itemDict = ctx.lookup(itemRefs[i], PDFDict);
+      if (i > 0) itemDict.set(PDFName.of('Prev'), itemRefs[i - 1]);
+      if (i < itemRefs.length - 1) itemDict.set(PDFName.of('Next'), itemRefs[i + 1]);
+    }
+
+    outlineRoot.set(PDFName.of('First'), itemRefs[0]);
+    outlineRoot.set(PDFName.of('Last'), itemRefs[itemRefs.length - 1]);
+    outlineRoot.set(PDFName.of('Count'), PDFNumber.of(itemRefs.length));
+
+    this.pdfDoc.catalog.set(PDFName.of('Outlines'), outlineRootRef);
   }
 }
 

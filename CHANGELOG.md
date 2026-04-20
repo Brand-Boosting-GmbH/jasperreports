@@ -6,6 +6,35 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+## [0.5.0] - 2026-04-20
+
+### Added
+- **`<frame>` nested layout.** Frames render an optional background +
+  border and recursively draw their children with coordinates relative to
+  the frame's top-left corner.
+- **`<break>` element.** `type="Page"` starts a new page; `type="Column"`
+  advances to the next column (falling back to a new page when columns
+  are exhausted).
+- **Multi-column reports.** `columnCount`, `columnWidth`, and
+  `columnSpacing` on `<jasperReport>` are honored. Detail / group bands
+  flow column-by-column before spilling to a new page; page headers and
+  footers still span the full width.
+- **Subreports.** New `subreportResolver(expression, ctx)` render option
+  — the parent evaluates `<subreportParameter>` expressions, invokes the
+  resolver with `{ parameters, fields }`, renders the returned
+  `ParsedReport` into a standalone PDF, and embeds its first page at the
+  subreport's rectangle. Data sources and field overrides can be passed
+  through via the resolver's return value.
+- **Hyperlinks.** `hyperlinkType="Reference"` with
+  `<hyperlinkReferenceExpression>` emits a PDF URI link annotation.
+  `hyperlinkType="LocalAnchor"` with `<hyperlinkAnchorExpression>` emits
+  an internal GoTo annotation, resolved against anchors declared via
+  `<anchorNameExpression>` (forward references supported).
+- **Anchors and bookmarks.** `<anchorNameExpression bookmarkLevel="N">`
+  registers a named destination and, when `bookmarkLevel ≥ 1`, adds an
+  entry to the PDF outline (bookmarks panel). The outline is built as a
+  flat sibling list in render order.
+
 ## [0.4.0] - 2026-04-20
 
 ### Added

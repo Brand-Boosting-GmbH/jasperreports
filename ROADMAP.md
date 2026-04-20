@@ -32,14 +32,14 @@ Prioritized list of JRXML features not yet implemented, ordered by effort.
 - [x] 20. Iterable data source — detail band repeats per row. **Biggest semantic unlock.**
 - [x] 21. Groups (`<group>` + headers/footers). Requires #20.
 
-## Tier 4 — Large (v0.7.0+)
+## Tier 4 — Large (v0.5.0) ✅ Shipped
 
-- [ ] 22. `<frame>` (nested element positioning).
-- [ ] 23. `<break>` (page/column break) — trivial once #15 exists.
-- [ ] 24. Subreports (simple case).
-- [ ] 25. Multi-column layout.
-- [ ] 26. Hyperlinks / anchors / bookmarks.
-- [ ] 27. Resource bundles / i18n (`$R{key}`).
+- [x] 22. `<frame>` (nested element positioning).
+- [x] 23. `<break>` (page/column break).
+- [x] 24. Subreports (simple case, via `subreportResolver` option).
+- [x] 25. Multi-column layout.
+- [x] 26. Hyperlinks / anchors / bookmarks.
+- [x] 27. Resource bundles / i18n (`$R{key}`). _(Shipped in Tier 3.)_
 
 ## Tier 5 — Out of scope
 
@@ -58,4 +58,4 @@ Prioritized list of JRXML features not yet implemented, ordered by effort.
 | **v0.2.0** | Tier 1 — polish, no breaking changes |
 | **v0.3.0** | Tier 2 — expression engine + styles + box + rotation + markup |
 | **v0.4.0** | Tier 3 — iterable data + multi-page + groups + variables + custom fonts |
-| **v0.5.0+** | Tier 4 — frames, breaks, columns, subreports, anchors (as needs arise) |
+| **v0.5.0** | Tier 4 — frames, breaks, columns, subreports, hyperlinks, bookmarks |

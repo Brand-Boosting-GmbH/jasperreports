@@ -9,11 +9,12 @@ Lightweight, **zero-Java** JRXML → PDF renderer for modern JavaScript runtimes
 Runs natively in **Cloudflare Workers**, **Node.js 18+**, **Deno**, and **browsers** — no JVM,
 no Puppeteer, no headless Chrome. Pure TypeScript + [`pdf-lib`](https://github.com/Hopding/pdf-lib).
 
-> ⚠️ **This is a pragmatic subset, not a full JasperReports port.** It covers roughly the set
-> of features you need for certificates, confirmations, tickets, labels and simple
-> single-page invoices. See the [Feature matrix](#feature-matrix) below before adopting it —
-> if your templates need subreports, charts, groups, tables with sums, or multi-page layout,
-> you will be disappointed.
+> ⚠️ **This is a pragmatic subset, not a full JasperReports port.** It covers the
+> features you need for certificates, confirmations, tickets, labels, invoices, grouped
+> financial reports, multi-column listings and subreports. See the
+> [Feature matrix](#feature-matrix) below before adopting it — if your templates need
+> charts, crosstabs, barcodes, Java scriptlets, HTML/RTF markup, or live database
+> queries, you will be disappointed.
 
 ## Why?
 
@@ -122,6 +123,13 @@ If any match you are almost certainly outside of this library's supported surfac
 | Custom font embedding | ✅ via `fonts: { fontkit, families }` render option |
 | Iterable data source | ✅ via `dataSource: Row[]` render option |
 | Resource bundles `$R{key}` | ✅ via `resources` render option |
+| `<frame>` nested layout | ✅ with background, box, and child offsets |
+| `<break type="Page"/>` / `<break type="Column"/>` | ✅ page break / column break |
+| Multi-column detail (`columnCount`, `columnWidth`, `columnSpacing`) | ✅ auto column flow |
+| `<subreport>` | ✅ via `subreportResolver` render option |
+| `hyperlinkType="Reference"` (URL link) | ✅ native PDF link annotations |
+| `hyperlinkType="LocalAnchor"` + `<anchorNameExpression>` | ✅ internal GoTo links |
+| `bookmarkLevel` on anchors | ✅ flat PDF outline / bookmarks |
 
 **Expressions**
 
@@ -143,7 +151,6 @@ If any match you are almost certainly outside of this library's supported surfac
 
 | Feature | Why not |
 |---|---|
-| `<subreport>` | Requires nested report execution |
 | `<template>` / external stylesheets | No external resource loading |
 | `<queryString>` | No database access |
 | `<scriptlet>` | No Java execution |
@@ -153,8 +160,6 @@ If any match you are almost certainly outside of this library's supported surfac
 
 | Element | Status |
 |---|---|
-| `<frame>` | ❌ grouping container |
-| `<break>` | ❌ page / column break |
 | `<componentElement>` | ❌ barcodes, lists, maps |
 | `<genericElement>` | ❌ custom extensions |
 | `<chart>` / `<barChart>` / `<pieChart>` / … | ❌ no chart engine |
@@ -167,10 +172,10 @@ If any match you are almost certainly outside of this library's supported surfac
 | `markup` (`html`, `rtf`) | ❌ | Use `markup="styled"` |
 | `markup="styled"` | ✅ | `<b>`, `<i>`, `<u>`, `<color rgb="#...">` |
 | `rotation` (text rotation) | ✅ | `Left`, `Right`, `UpsideDown` |
-| `hyperlinkType` / anchors / bookmarks | ❌ | — |
-| `box` / border / padding | ❌ | — |
+| `hyperlinkType` / anchors / bookmarks | ✅ | `Reference`, `LocalAnchor`, `bookmarkLevel` |
+| `box` / border / padding | ✅ | per-side pens + paddings |
 | Line spacing / paragraph indent | ❌ | — |
-| Custom fonts via `<fontName>` | ❌ | Falls back to Helvetica |
+| Custom fonts via `<fontName>` | ✅ | via `fonts` render option |
 
 **Expressions**
 
@@ -186,20 +191,20 @@ If any match you are almost certainly outside of this library's supported surfac
 
 | Feature | Status |
 |---|---|
-| Multi-page output (automatic page break) | ❌ single page only |
-| Multi-column layout | ❌ single column only |
-| Dynamic band height (`stretchType`) | ❌ fixed height |
+| Multi-page output (automatic page break) | ✅ |
+| Multi-column layout | ✅ `columnCount` / `columnWidth` / `columnSpacing` |
+| Dynamic band height (`stretchType` / `textAdjust="StretchHeight"`) | ✅ `StretchHeight` on `<textField>` |
 
 ### Rough coverage estimate
 
-Roughly **~70 % of simple certificate / invoice / receipt templates** should work out of
+Roughly **~90 % of common certificate / invoice / receipt templates** should work out of
 the box.
 
-- ✅ Works well: certificates, diplomas, confirmations, tickets, labels, simple
-  fixed-layout invoices, single-page static reports.
-- ❌ Will not work: reports with data tables (row lists), financial reports with sums or
-  totals, reports with charts or crosstabs, multi-page reports, reports that rely on Java
-  expressions for formatting.
+- ✅ Works well: certificates, diplomas, confirmations, tickets, labels, invoices
+  (including multi-page, grouped, multi-column, subreports, hyperlinks), financial reports
+  with sums / averages / counts, reports with nested frames.
+- ❌ Will not work: charts, crosstabs, barcodes, reports that rely on Java scriptlets or
+  live database queries, HTML/RTF markup.
 
 ## API
 
@@ -288,7 +293,7 @@ still on the list:
 - [ ] Group headers / footers
 - [ ] Custom font embedding helpers
 - [ ] Richer expression engine (method calls, `SimpleDateFormat`, arithmetic, conditionals)
-- [ ] Subreport support (simple cases)
+- [x] Subreport support (simple cases)
 - [ ] `<style>` / style inheritance
 - [ ] `<box>` borders and padding
 - [ ] Barcode elements via plug-in
