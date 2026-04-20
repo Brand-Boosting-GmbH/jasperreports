@@ -52,6 +52,49 @@ export interface ReportElement {
   mode?: 'Opaque' | 'Transparent';
   /** Optional expression controlling whether the element is rendered. */
   printWhenExpression?: string;
+  /** Name of a report-level `<style>` to inherit attributes from. */
+  style?: string;
+}
+
+/**
+ * Box properties: per-side borders and padding.
+ */
+export interface BoxPen {
+  lineWidth: number;
+  lineColor: string;
+  lineStyle: 'Solid' | 'Dashed' | 'Dotted';
+}
+
+export interface BoxStyle {
+  topPen?: BoxPen;
+  leftPen?: BoxPen;
+  bottomPen?: BoxPen;
+  rightPen?: BoxPen;
+  topPadding?: number;
+  leftPadding?: number;
+  bottomPadding?: number;
+  rightPadding?: number;
+}
+
+/**
+ * A named `<style>` declaration from the report template. All fields are
+ * optional — they merge into child elements that reference the style.
+ */
+export interface ReportStyle {
+  name: string;
+  parent?: string;
+  forecolor?: string;
+  backcolor?: string;
+  mode?: 'Opaque' | 'Transparent';
+  fontName?: string;
+  fontSize?: number;
+  isBold?: boolean;
+  isItalic?: boolean;
+  isUnderline?: boolean;
+  textAlignment?: 'Left' | 'Center' | 'Right' | 'Justified';
+  verticalAlignment?: 'Top' | 'Middle' | 'Bottom';
+  pattern?: string;
+  box?: BoxStyle;
 }
 
 /**
@@ -66,6 +109,10 @@ export interface TextStyle {
   textAlignment: 'Left' | 'Center' | 'Right' | 'Justified';
   verticalAlignment: 'Top' | 'Middle' | 'Bottom';
   forecolor: string;
+  /** Rotation applied to the text within its element box. */
+  rotation?: 'None' | 'Left' | 'Right' | 'UpsideDown';
+  /** Inline markup format; only `none` and `styled` are honored. */
+  markup?: 'none' | 'styled' | 'html' | 'rtf';
 }
 
 /**
@@ -76,6 +123,7 @@ export interface StaticTextElement {
   reportElement: ReportElement;
   textStyle: TextStyle;
   text: string;
+  box?: BoxStyle;
 }
 
 /**
@@ -91,6 +139,7 @@ export interface TextFieldElement {
   textAdjust?: 'StretchHeight' | 'ScaleFont';
   isBlankWhenNull: boolean;
   pattern?: string;
+  box?: BoxStyle;
 }
 
 /**
@@ -179,6 +228,9 @@ export interface ParsedReport {
   
   /** Variable definitions */
   variables: Map<string, { class: string; calculation?: string; expression?: string }>;
+
+  /** Named `<style>` declarations for inheritance. */
+  styles: Map<string, ReportStyle>;
   
   /** Report bands */
   bands: {

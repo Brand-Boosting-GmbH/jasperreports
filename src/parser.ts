@@ -2,7 +2,7 @@
  * JRXML Parser and Renderer
  */
 
-import { PDFDocument, StandardFonts, rgb, PDFFont, PDFPage, PDFImage } from 'pdf-lib';
+import { PDFDocument, StandardFonts, rgb, PDFFont, PDFPage, PDFImage, degrees } from 'pdf-lib';
 import { XMLParser } from './xml-parser';
 import { ExpressionEvaluator } from './expression';
 import { formatPattern, isTruthyPrintWhen } from './format';
@@ -21,6 +21,9 @@ import type {
   RectangleElement,
   EllipseElement,
   XMLElement,
+  ReportStyle,
+  BoxStyle,
+  BoxPen,
 } from './types';
 
 // Re-export for library users
@@ -34,6 +37,7 @@ export { ExpressionEvaluator };
 export class JRXMLParser {
   private xml: XMLParser;
   private debug: boolean;
+  private styles: Map<string, ReportStyle> = new Map();
 
   constructor(jrxmlContent: string, debug: boolean = false) {
     this.xml = new XMLParser(jrxmlContent);
@@ -62,11 +66,12 @@ export class JRXMLParser {
     const fields = this.parseFields(root);
     const parameters = this.parseParameters(root);
     const variables = this.parseVariables(root);
+    this.parseStyles(root); // populate this.styles before parsing bands
     const bands = this.parseBands(root);
 
     this.log('Parse complete');
 
-    return { config, fields, parameters, variables, bands };
+    return { config, fields, parameters, variables, styles: this.styles, bands };
   }
 
   private parseConfig(root: XMLElement): ReportConfig {
@@ -125,6 +130,72 @@ export class JRXMLParser {
       }
     }
     return vars;
+  }
+
+  private parseStyles(root: XMLElement): void {
+    for (const el of XMLParser.getChildren(root, 'style')) {
+      const name = XMLParser.getAttr(el, 'name');
+      if (!name) continue;
+      const parent = XMLParser.getAttr(el, 'style') || undefined;
+      const style: ReportStyle = {
+        name,
+        parent,
+        forecolor: XMLParser.getAttr(el, 'forecolor') || undefined,
+        backcolor: XMLParser.getAttr(el, 'backcolor') || undefined,
+        mode: (XMLParser.getAttr(el, 'mode') || undefined) as ReportStyle['mode'],
+        fontName: XMLParser.getAttr(el, 'fontName') || undefined,
+        fontSize: el.attributes['fontSize'] ? parseFloat(el.attributes['fontSize']) : undefined,
+        isBold: el.attributes['isBold'] !== undefined ? XMLParser.getAttrBool(el, 'isBold', false) : undefined,
+        isItalic: el.attributes['isItalic'] !== undefined ? XMLParser.getAttrBool(el, 'isItalic', false) : undefined,
+        isUnderline: el.attributes['isUnderline'] !== undefined ? XMLParser.getAttrBool(el, 'isUnderline', false) : undefined,
+        textAlignment: (XMLParser.getAttr(el, 'hTextAlign') || XMLParser.getAttr(el, 'hAlign') || undefined) as ReportStyle['textAlignment'],
+        verticalAlignment: (XMLParser.getAttr(el, 'vTextAlign') || XMLParser.getAttr(el, 'vAlign') || undefined) as ReportStyle['verticalAlignment'],
+        pattern: XMLParser.getAttr(el, 'pattern') || undefined,
+      };
+      const boxEl = XMLParser.getChild(el, 'box');
+      if (boxEl) style.box = this.parseBox(boxEl);
+      this.styles.set(name, style);
+    }
+  }
+
+  private resolveStyle(name: string | undefined): ReportStyle | null {
+    if (!name) return null;
+    const style = this.styles.get(name);
+    if (!style) return null;
+    if (!style.parent) return style;
+    // Merge parent chain (shallowly). Child attributes override parent.
+    const parent = this.resolveStyle(style.parent);
+    if (!parent) return style;
+    return { ...parent, ...Object.fromEntries(Object.entries(style).filter(([, v]) => v !== undefined)), box: { ...(parent.box || {}), ...(style.box || {}) } } as ReportStyle;
+  }
+
+  private parseBox(boxEl: XMLElement): BoxStyle {
+    const readPen = (penEl: XMLElement | null, fallback?: BoxPen): BoxPen | undefined => {
+      if (!penEl) return fallback;
+      const lineWidth = penEl.attributes['lineWidth'] !== undefined ? parseFloat(penEl.attributes['lineWidth']) : fallback?.lineWidth ?? 1;
+      const lineColor = XMLParser.getAttr(penEl, 'lineColor') || fallback?.lineColor || '#000000';
+      const lineStyle = (XMLParser.getAttr(penEl, 'lineStyle') || fallback?.lineStyle || 'Solid') as BoxPen['lineStyle'];
+      return { lineWidth, lineColor, lineStyle };
+    };
+
+    const basePen = readPen(XMLParser.getChild(boxEl, 'pen'));
+    const box: BoxStyle = {
+      topPen: readPen(XMLParser.getChild(boxEl, 'topPen'), basePen),
+      leftPen: readPen(XMLParser.getChild(boxEl, 'leftPen'), basePen),
+      bottomPen: readPen(XMLParser.getChild(boxEl, 'bottomPen'), basePen),
+      rightPen: readPen(XMLParser.getChild(boxEl, 'rightPen'), basePen),
+    };
+
+    const parseIntOrUndef = (key: string): number | undefined => {
+      const v = boxEl.attributes[key];
+      return v === undefined ? undefined : parseFloat(v);
+    };
+    const padding = parseIntOrUndef('padding');
+    box.topPadding = parseIntOrUndef('topPadding') ?? padding;
+    box.leftPadding = parseIntOrUndef('leftPadding') ?? padding;
+    box.bottomPadding = parseIntOrUndef('bottomPadding') ?? padding;
+    box.rightPadding = parseIntOrUndef('rightPadding') ?? padding;
+    return box;
   }
 
   private parseBands(root: XMLElement): ParsedReport['bands'] {
@@ -189,6 +260,8 @@ export class JRXMLParser {
     if (!reportElement) return { x: 0, y: 0, width: 100, height: 20 };
 
     const printWhenExpr = XMLParser.getChild(reportElement, 'printWhenExpression');
+    const styleName = XMLParser.getAttr(reportElement, 'style') || undefined;
+    const inherited = this.resolveStyle(styleName);
 
     return {
       x: XMLParser.getAttrInt(reportElement, 'x', 0),
@@ -196,48 +269,72 @@ export class JRXMLParser {
       width: XMLParser.getAttrInt(reportElement, 'width', 100),
       height: XMLParser.getAttrInt(reportElement, 'height', 20),
       uuid: XMLParser.getAttr(reportElement, 'uuid'),
-      forecolor: XMLParser.getAttr(reportElement, 'forecolor'),
-      backcolor: XMLParser.getAttr(reportElement, 'backcolor'),
-      mode: XMLParser.getAttr(reportElement, 'mode') as ReportElement['mode'],
+      forecolor: XMLParser.getAttr(reportElement, 'forecolor') || inherited?.forecolor,
+      backcolor: XMLParser.getAttr(reportElement, 'backcolor') || inherited?.backcolor,
+      mode: (XMLParser.getAttr(reportElement, 'mode') as ReportElement['mode']) || inherited?.mode,
       printWhenExpression: printWhenExpr ? XMLParser.getText(printWhenExpr) : undefined,
+      style: styleName,
     };
   }
 
   private parseTextStyle(el: XMLElement): TextStyle {
     const textElement = XMLParser.getChild(el, 'textElement');
     const font = textElement ? XMLParser.getChild(textElement, 'font') : null;
+    const reportElement = XMLParser.getChild(el, 'reportElement');
+    const styleName = reportElement ? XMLParser.getAttr(reportElement, 'style') : '';
+    const inherited = this.resolveStyle(styleName);
 
     const style: TextStyle = {
-      fontName: 'Helvetica',
-      fontSize: 12,
-      isBold: false,
-      isItalic: false,
-      isUnderline: false,
-      textAlignment: 'Left',
-      verticalAlignment: 'Top',
-      forecolor: '#000000',
+      fontName: inherited?.fontName ?? 'Helvetica',
+      fontSize: inherited?.fontSize ?? 12,
+      isBold: inherited?.isBold ?? false,
+      isItalic: inherited?.isItalic ?? false,
+      isUnderline: inherited?.isUnderline ?? false,
+      textAlignment: inherited?.textAlignment ?? 'Left',
+      verticalAlignment: inherited?.verticalAlignment ?? 'Top',
+      forecolor: inherited?.forecolor ?? '#000000',
     };
 
     if (textElement) {
-      style.textAlignment = XMLParser.getAttr(textElement, 'textAlignment', 'Left') as TextStyle['textAlignment'];
-      style.verticalAlignment = XMLParser.getAttr(textElement, 'verticalAlignment', 'Top') as TextStyle['verticalAlignment'];
+      const ta = XMLParser.getAttr(textElement, 'textAlignment');
+      if (ta) style.textAlignment = ta as TextStyle['textAlignment'];
+      const va = XMLParser.getAttr(textElement, 'verticalAlignment');
+      if (va) style.verticalAlignment = va as TextStyle['verticalAlignment'];
+      const rot = XMLParser.getAttr(textElement, 'rotation') as TextStyle['rotation'];
+      if (rot) style.rotation = rot;
+      const markup = XMLParser.getAttr(textElement, 'markup') as TextStyle['markup'];
+      if (markup) style.markup = markup;
     }
 
     if (font) {
-      style.fontName = XMLParser.getAttr(font, 'fontName', 'Helvetica');
-      style.fontSize = XMLParser.getAttrInt(font, 'size', 12);
-      style.isBold = XMLParser.getAttrBool(font, 'isBold', false);
-      style.isItalic = XMLParser.getAttrBool(font, 'isItalic', false);
-      style.isUnderline = XMLParser.getAttrBool(font, 'isUnderline', false);
+      const fn = XMLParser.getAttr(font, 'fontName');
+      if (fn) style.fontName = fn;
+      if (font.attributes['size']) style.fontSize = parseFloat(font.attributes['size']);
+      if (font.attributes['isBold'] !== undefined) style.isBold = XMLParser.getAttrBool(font, 'isBold', false);
+      if (font.attributes['isItalic'] !== undefined) style.isItalic = XMLParser.getAttrBool(font, 'isItalic', false);
+      if (font.attributes['isUnderline'] !== undefined) style.isUnderline = XMLParser.getAttrBool(font, 'isUnderline', false);
     }
 
-    const reportElement = XMLParser.getChild(el, 'reportElement');
     if (reportElement) {
       const forecolor = XMLParser.getAttr(reportElement, 'forecolor');
       if (forecolor) style.forecolor = forecolor;
     }
 
     return style;
+  }
+
+  /**
+   * Resolve the effective box for an element, merging inherited style box
+   * with the element's own `<box>` child (child wins).
+   */
+  private resolveBox(el: XMLElement): BoxStyle | undefined {
+    const reportElement = XMLParser.getChild(el, 'reportElement');
+    const styleName = reportElement ? XMLParser.getAttr(reportElement, 'style') : '';
+    const inherited = this.resolveStyle(styleName);
+    const ownBoxEl = XMLParser.getChild(el, 'box');
+    const own = ownBoxEl ? this.parseBox(ownBoxEl) : undefined;
+    if (!inherited?.box && !own) return undefined;
+    return { ...(inherited?.box || {}), ...(own || {}) };
   }
 
   private parseStaticText(el: XMLElement): StaticTextElement {
@@ -247,11 +344,13 @@ export class JRXMLParser {
       reportElement: this.parseReportElement(el),
       textStyle: this.parseTextStyle(el),
       text: textEl ? XMLParser.getText(textEl) : '',
+      box: this.resolveBox(el),
     };
   }
 
   private parseTextField(el: XMLElement): TextFieldElement {
     const exprEl = XMLParser.getChild(el, 'textFieldExpression');
+    const inherited = this.resolveStyle(XMLParser.getAttr(XMLParser.getChild(el, 'reportElement') ?? el, 'style'));
     return {
       type: 'textField',
       reportElement: this.parseReportElement(el),
@@ -260,7 +359,8 @@ export class JRXMLParser {
       expressionClass: exprEl ? XMLParser.getAttr(exprEl, 'class') || undefined : undefined,
       textAdjust: XMLParser.getAttr(el, 'textAdjust') as TextFieldElement['textAdjust'],
       isBlankWhenNull: XMLParser.getAttrBool(el, 'isBlankWhenNull', false),
-      pattern: XMLParser.getAttr(el, 'pattern') || undefined,
+      pattern: XMLParser.getAttr(el, 'pattern') || inherited?.pattern || undefined,
+      box: this.resolveBox(el),
     };
   }
 
@@ -492,7 +592,8 @@ export class JRXMLRenderer {
   }
 
   private async renderStaticText(element: StaticTextElement, bandTopY: number): Promise<void> {
-    await this.drawText(element.text, element.reportElement, element.textStyle, bandTopY);
+    this.drawBox(element.reportElement, element.box, bandTopY);
+    await this.drawText(element.text, element.reportElement, element.textStyle, bandTopY, element.box);
   }
 
   private async renderTextField(element: TextFieldElement, bandTopY: number): Promise<void> {
@@ -506,14 +607,16 @@ export class JRXMLRenderer {
       ? formatPattern(raw, element.pattern)
       : raw?.toString() ?? '';
 
-    await this.drawText(text, element.reportElement, element.textStyle, bandTopY);
+    this.drawBox(element.reportElement, element.box, bandTopY);
+    await this.drawText(text, element.reportElement, element.textStyle, bandTopY, element.box);
   }
 
   private async drawText(
     text: string,
     reportElement: ReportElement,
     textStyle: TextStyle,
-    bandTopY: number
+    bandTopY: number,
+    box?: BoxStyle,
   ): Promise<void> {
     if (!text) return;
 
@@ -521,11 +624,34 @@ export class JRXMLRenderer {
     const fontSize = textStyle.fontSize;
     const color = this.parseColor(textStyle.forecolor);
 
-    const x = this.report.config.leftMargin + reportElement.x;
-    const elementTopY = bandTopY - reportElement.y;
-    const elementBottomY = elementTopY - reportElement.height;
+    // Apply box padding to the content area.
+    const padLeft = box?.leftPadding ?? 0;
+    const padRight = box?.rightPadding ?? 0;
+    const padTop = box?.topPadding ?? 0;
+    const padBottom = box?.bottomPadding ?? 0;
 
-    const lines = this.wrapText(text, font, fontSize, reportElement.width);
+    const x = this.report.config.leftMargin + reportElement.x + padLeft;
+    const elementTopY = bandTopY - reportElement.y - padTop;
+    const elementBottomY = elementTopY - (reportElement.height - padTop - padBottom);
+    const contentWidth = reportElement.width - padLeft - padRight;
+    const contentHeight = reportElement.height - padTop - padBottom;
+
+    // Rotated text draws a single line along the rotated axis; layout and
+    // wrapping differ fundamentally from the unrotated path.
+    if (textStyle.rotation && textStyle.rotation !== 'None') {
+      this.drawRotatedText(text, x, elementTopY, contentWidth, contentHeight, font, fontSize, color, textStyle);
+      return;
+    }
+
+    // Parse styled markup into runs if enabled; otherwise a single plain run.
+    const runs = textStyle.markup === 'styled'
+      ? parseStyledMarkup(text)
+      : [{ text, bold: textStyle.isBold, italic: textStyle.isItalic, underline: textStyle.isUnderline, color: textStyle.forecolor }];
+
+    // Wrap the rendered text by measuring with the base font; styled runs
+    // inherit width-measurement from the base font for simplicity.
+    const plain = runs.map((r) => r.text).join('');
+    const lines = this.wrapText(plain, font, fontSize, contentWidth);
     const lineHeight = fontSize * 1.2;
     const totalTextHeight = lines.length * lineHeight;
 
@@ -535,12 +661,18 @@ export class JRXMLRenderer {
         textY = elementBottomY + (lines.length - 1) * lineHeight + fontSize * 0.2;
         break;
       case 'Middle':
-        textY = elementTopY - (reportElement.height - totalTextHeight) / 2 - fontSize;
+        textY = elementTopY - (contentHeight - totalTextHeight) / 2 - fontSize;
         break;
       case 'Top':
       default:
         textY = elementTopY - fontSize;
         break;
+    }
+
+    // If markup is styled, draw line-by-line splitting runs across lines.
+    if (textStyle.markup === 'styled' && runs.length > 1) {
+      this.drawStyledLines(runs, x, textY, lineHeight, contentWidth, fontSize, textStyle);
+      return;
     }
 
     for (let i = 0; i < lines.length; i++) {
@@ -551,10 +683,10 @@ export class JRXMLRenderer {
       let textX = x;
       switch (textStyle.textAlignment) {
         case 'Center':
-          textX = x + (reportElement.width - lineWidth) / 2;
+          textX = x + (contentWidth - lineWidth) / 2;
           break;
         case 'Right':
-          textX = x + reportElement.width - lineWidth;
+          textX = x + contentWidth - lineWidth;
           break;
       }
 
@@ -572,6 +704,108 @@ export class JRXMLRenderer {
         });
       }
     }
+  }
+
+  /**
+   * Draw a rotated single-line text within the element box. Rotation follows
+   * JRXML conventions: Left = 90° CCW, Right = 90° CW, UpsideDown = 180°.
+   */
+  private drawRotatedText(
+    text: string,
+    boxX: number,
+    boxTopY: number,
+    boxW: number,
+    boxH: number,
+    font: PDFFont,
+    fontSize: number,
+    color: ReturnType<typeof rgb>,
+    textStyle: TextStyle,
+  ): void {
+    const rotation = textStyle.rotation!;
+    const textWidth = font.widthOfTextAtSize(text, fontSize);
+
+    // Anchor point at the element box center; the rotation translates
+    // (0, 0) to the anchor, then rotates the text.
+    const cx = boxX + boxW / 2;
+    const cy = boxTopY - boxH / 2;
+
+    let x = cx;
+    let y = cy;
+    let deg = 0;
+
+    if (rotation === 'Left') { deg = 90; x = cx - fontSize / 2; y = cy - textWidth / 2; }
+    else if (rotation === 'Right') { deg = -90; x = cx + fontSize / 2; y = cy + textWidth / 2; }
+    else if (rotation === 'UpsideDown') { deg = 180; x = cx + textWidth / 2; y = cy + fontSize / 2; }
+
+    this.page.drawText(text, { x, y, size: fontSize, font, color, rotate: degrees(deg) });
+  }
+
+  private drawStyledLines(
+    runs: StyledRun[],
+    x: number,
+    firstLineY: number,
+    lineHeight: number,
+    maxWidth: number,
+    fontSize: number,
+    base: TextStyle,
+  ): void {
+    let cursorX = x;
+    let cursorY = firstLineY;
+    for (const run of runs) {
+      const font = this.getFont({ ...base, isBold: run.bold ?? base.isBold, isItalic: run.italic ?? base.isItalic });
+      const color = this.parseColor(run.color ?? base.forecolor);
+      const words = run.text.split(/(\s+)/);
+      for (const word of words) {
+        const w = font.widthOfTextAtSize(word, fontSize);
+        if (cursorX - x + w > maxWidth && word.trim()) {
+          cursorY -= lineHeight;
+          cursorX = x;
+        }
+        this.page.drawText(word, { x: cursorX, y: cursorY, size: fontSize, font, color });
+        if (run.underline) {
+          this.page.drawLine({
+            start: { x: cursorX, y: cursorY - fontSize * 0.12 },
+            end: { x: cursorX + w, y: cursorY - fontSize * 0.12 },
+            thickness: Math.max(0.5, fontSize * 0.06),
+            color,
+          });
+        }
+        cursorX += w;
+      }
+    }
+  }
+
+  /**
+   * Draw the four box borders (if defined). Backcolor fill is handled by
+   * the existing report-element rendering path; this only draws the pens.
+   */
+  private drawBox(re: ReportElement, box: BoxStyle | undefined, bandTopY: number): void {
+    if (!box) return;
+
+    const x = this.report.config.leftMargin + re.x;
+    const y = bandTopY - re.y - re.height;
+    const w = re.width;
+    const h = re.height;
+
+    // Opaque backcolor fill (if declared on the reportElement).
+    if (re.mode === 'Opaque' && re.backcolor) {
+      this.page.drawRectangle({ x, y, width: w, height: h, color: this.parseColor(re.backcolor) });
+    }
+
+    const stroke = (pen: BoxPen | undefined, start: { x: number; y: number }, end: { x: number; y: number }) => {
+      if (!pen || pen.lineWidth <= 0) return;
+      this.page.drawLine({
+        start, end,
+        thickness: pen.lineWidth,
+        color: this.parseColor(pen.lineColor),
+        dashArray: this.dashArrayForLineStyle(pen.lineStyle, pen.lineWidth),
+      });
+    };
+
+    stroke(box.topPen, { x, y: y + h }, { x: x + w, y: y + h });
+    stroke(box.bottomPen, { x, y }, { x: x + w, y });
+    stroke(box.leftPen, { x, y }, { x, y: y + h });
+    stroke(box.rightPen, { x: x + w, y }, { x: x + w, y: y + h });
   }
 
   private wrapText(text: string, font: PDFFont, fontSize: number, maxWidth: number): string[] {
@@ -596,8 +830,9 @@ export class JRXMLRenderer {
   }
 
   private async renderImage(element: ImageElement, bandTopY: number): Promise<void> {
-    const imagePath = this.evaluator.evaluate(element.expression);
-    if (!imagePath) return;
+    const resolved = this.evaluator.evaluate(element.expression);
+    if (resolved === null || resolved === undefined || resolved === '') return;
+    const imagePath = String(resolved);
 
     let imageBytes: Uint8Array | null = null;
 
@@ -740,6 +975,59 @@ export class JRXMLRenderer {
 // ============================================================
 // PUBLIC API
 // ============================================================
+
+/**
+ * A span of text with optional style overrides, produced by `parseStyledMarkup`.
+ */
+interface StyledRun {
+  text: string;
+  bold?: boolean;
+  italic?: boolean;
+  underline?: boolean;
+  color?: string;
+}
+
+/**
+ * Parse a tiny subset of Jasper styled markup into style runs.
+ *
+ * Supported tags: `<b>`, `<i>`, `<u>`, `<color rgb="#RRGGBB">`. Unknown tags
+ * are stripped. This is intentionally minimal — full styled markup requires
+ * a proper parser and is out of scope for this release.
+ */
+function parseStyledMarkup(source: string): StyledRun[] {
+  const runs: StyledRun[] = [];
+  const stack: StyledRun[] = [{ text: '' }];
+  const re = /<(\/?)(b|i|u|color)(\s+rgb="(#[0-9a-fA-F]{3,6})")?\s*>/g;
+  let lastIndex = 0;
+  let m: RegExpExecArray | null;
+
+  const push = (text: string) => {
+    if (!text) return;
+    const top = stack[stack.length - 1];
+    runs.push({ ...top, text });
+  };
+
+  while ((m = re.exec(source)) !== null) {
+    push(source.substring(lastIndex, m.index));
+    const closing = m[1] === '/';
+    const tag = m[2].toLowerCase();
+    const rgb = m[4];
+
+    if (closing) {
+      if (stack.length > 1) stack.pop();
+    } else {
+      const current = { ...stack[stack.length - 1] };
+      if (tag === 'b') current.bold = true;
+      else if (tag === 'i') current.italic = true;
+      else if (tag === 'u') current.underline = true;
+      else if (tag === 'color' && rgb) current.color = rgb;
+      stack.push(current);
+    }
+    lastIndex = m.index + m[0].length;
+  }
+  push(source.substring(lastIndex));
+  return runs;
+}
 
 /**
  * Render a JRXML template to PDF

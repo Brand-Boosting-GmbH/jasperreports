@@ -12,15 +12,15 @@ Prioritized list of JRXML features not yet implemented, ordered by effort.
 - [x] 6. Pattern-based number formatting (`#,##0.00`) — `Intl.NumberFormat`.
 - [x] 7. Pattern-based date formatting (`yyyy-MM-dd`, `dd.MM.yyyy`) — token-map to `Intl.DateTimeFormat`.
 
-## Tier 2 — Small (v0.3.0 / v0.4.0)
+## Tier 2 — Small (v0.3.0) ✅ Shipped
 
-- [ ] 8. `<box>` borders + padding.
-- [ ] 9. Text rotation (`rotation="Left"/"Right"/"UpsideDown"`).
-- [ ] 10. `markup="styled"` inline styling (`<b>`, `<i>`, `<color>`).
-- [ ] 11. Arithmetic in expressions (`+ - * / %` with numbers).
-- [ ] 12. Conditional expressions (`cond ? a : b`).
-- [ ] 13. `<style>` + style inheritance.
-- [ ] 14. Java method shims (`.toUpperCase()`, `.trim()`, `.substring()`, `.toString()`).
+- [x] 8. `<box>` borders + padding.
+- [x] 9. Text rotation (`rotation="Left"/"Right"/"UpsideDown"`).
+- [x] 10. `markup="styled"` inline styling (`<b>`, `<i>`, `<color>`).
+- [x] 11. Arithmetic in expressions (`+ - * / %` with numbers).
+- [x] 12. Conditional expressions (`cond ? a : b`).
+- [x] 13. `<style>` + style inheritance.
+- [x] 14. Java method shims (`.toUpperCase()`, `.trim()`, `.substring()`, `.toString()`).
 
 ## Tier 3 — Medium (v0.5.0 / v0.6.0)
 
@@ -56,8 +56,8 @@ Prioritized list of JRXML features not yet implemented, ordered by effort.
 | Version | Scope |
 |---|---|
 | **v0.2.0** | Tier 1 — polish, no breaking changes |
-| **v0.3.0** | Expression + style work (#11–#14) |
-| **v0.4.0** | Layout extras (#8–#10) |
+| **v0.3.0** | Tier 2 — expression engine + styles + box + rotation + markup |
+| **v0.4.0** | Layout extras, remaining Tier 2 polish |
 | **v0.5.0** | Iterable data + multi-page (#15, #16, #20) — the big one |
 | **v0.6.0** | Groups + variable calculations (#17, #21) |
 | **v0.7.0+** | Tier 4 as needs arise |

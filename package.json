@@ -1,6 +1,6 @@
 {
   "name": "jasperreports",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Lightweight, zero-Java JasperReports JRXML to PDF renderer for Cloudflare Workers, Node.js, Deno and browsers",
   "license": "MIT",
   "type": "module",

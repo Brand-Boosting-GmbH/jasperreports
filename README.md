@@ -109,16 +109,24 @@ If any match you are almost certainly outside of this library's supported surfac
 | `scaleImage` on `<image>` | ✅ `FillFrame`, `RetainShape`, `Clip` (+ `hAlign` / `vAlign`) |
 | `pattern` on `<textField>` | ✅ DecimalFormat / SimpleDateFormat subset |
 | `printWhenExpression` | ✅ evaluated via expression engine |
+| `<style>` + inheritance | ✅ named styles + parent chain |
+| `<box>` borders + padding | ✅ per-side pens + paddings |
+| `rotation` on text | ✅ `Left`, `Right`, `UpsideDown` |
+| `markup="styled"` | ✅ inline `<b>`, `<i>`, `<u>`, `<color>` |
 
 **Expressions**
 
 | Pattern | Example |
 |---|---|
-| Field reference | `$F{fieldName}` |
-| Parameter reference | `$P{paramName}` |
-| Variable reference | `$V{varName}` |
+| Field / param / var | `$F{fieldName}` / `$P{paramName}` / `$V{varName}` |
+| Resource | `$R{bundleKey}` |
 | String concatenation | `$F{first} + " " + $F{last}` |
-| String literals | `"Prefix: " + $F{value}` |
+| Arithmetic | `$F{a} + $F{b} * 2` |
+| Comparison + logic | `$F{n} > 0 && $F{n} < 100` |
+| Ternary | `$F{n} > 0 ? "pos" : "neg"` |
+| String methods | `$F{s}.toUpperCase()`, `.substring(0, 3)`, `.replace("a", "b")` |
+| Number methods | `$F{x}.toFixed(2)`, `.intValue()` |
+| `SimpleDateFormat` | `new SimpleDateFormat("yyyy-MM-dd").format($F{date})` |
 
 ### ❌ Not supported
 
@@ -128,7 +136,6 @@ If any match you are almost certainly outside of this library's supported surfac
 |---|---|
 | `<subreport>` | Requires nested report execution |
 | `<group>` + `groupHeader` / `groupFooter` | Requires data-driven grouping |
-| `<style>` / style inheritance | Styles must be inlined |
 | `<template>` / external stylesheets | No external resource loading |
 | `<queryString>` | No database access |
 | `<scriptlet>` | No Java execution |
@@ -151,8 +158,9 @@ If any match you are almost certainly outside of this library's supported surfac
 
 | Attribute | Status | Workaround |
 |---|---|---|
-| `markup` (`html`, `styled`, `rtf`) | ❌ | Plain text only |
-| `rotation` (text rotation) | ❌ | — |
+| `markup` (`html`, `rtf`) | ❌ | Use `markup="styled"` |
+| `markup="styled"` | ✅ | `<b>`, `<i>`, `<u>`, `<color rgb="#...">` |
+| `rotation` (text rotation) | ✅ | `Left`, `Right`, `UpsideDown` |
 | `hyperlinkType` / anchors / bookmarks | ❌ | — |
 | `box` / border / padding | ❌ | — |
 | Line spacing / paragraph indent | ❌ | — |

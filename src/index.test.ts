@@ -192,3 +192,123 @@ describe('Tier 1 features', () => {
     expect(bytes.length).toBeGreaterThan(0);
   });
 });
+
+describe('Tier 2 features', () => {
+  it('parses <style> and exposes them on the report', () => {
+    const jrxml = `<?xml version="1.0" encoding="UTF-8"?>
+<jasperReport name="StyleTest" pageWidth="200" pageHeight="200"
+              leftMargin="10" rightMargin="10" topMargin="10" bottomMargin="10">
+  <style name="Header" forecolor="#FF0000" fontName="Times-Roman" fontSize="16" isBold="true"/>
+  <title>
+    <band height="50">
+      <staticText>
+        <reportElement style="Header" x="0" y="0" width="180" height="20"/>
+        <text><![CDATA[Hello]]></text>
+      </staticText>
+    </band>
+  </title>
+</jasperReport>`;
+    const report = parseJRXML(jrxml);
+    expect(report.styles.size).toBe(1);
+    expect(report.styles.get('Header')?.forecolor).toBe('#FF0000');
+    const el = report.bands.title!.elements[0];
+    expect(el.reportElement.style).toBe('Header');
+    expect(el.reportElement.forecolor).toBe('#FF0000');
+    if (el.type === 'staticText') {
+      expect(el.textStyle.fontName).toBe('Times-Roman');
+      expect(el.textStyle.fontSize).toBe(16);
+      expect(el.textStyle.isBold).toBe(true);
+    }
+  });
+
+  it('supports style inheritance via parent style', () => {
+    const jrxml = `<?xml version="1.0" encoding="UTF-8"?>
+<jasperReport name="InheritTest" pageWidth="200" pageHeight="200"
+              leftMargin="10" rightMargin="10" topMargin="10" bottomMargin="10">
+  <style name="Base" fontSize="10" fontName="Helvetica"/>
+  <style name="Child" style="Base" isBold="true"/>
+  <title>
+    <band height="50">
+      <staticText>
+        <reportElement style="Child" x="0" y="0" width="180" height="20"/>
+        <text><![CDATA[X]]></text>
+      </staticText>
+    </band>
+  </title>
+</jasperReport>`;
+    const report = parseJRXML(jrxml);
+    const el = report.bands.title!.elements[0];
+    if (el.type === 'staticText') {
+      expect(el.textStyle.fontName).toBe('Helvetica');
+      expect(el.textStyle.fontSize).toBe(10);
+      expect(el.textStyle.isBold).toBe(true);
+    }
+  });
+
+  it('parses <box> borders and padding on a textField', () => {
+    const jrxml = `<?xml version="1.0" encoding="UTF-8"?>
+<jasperReport name="BoxTest" pageWidth="200" pageHeight="200"
+              leftMargin="10" rightMargin="10" topMargin="10" bottomMargin="10">
+  <field name="name" class="java.lang.String"/>
+  <detail>
+    <band height="50">
+      <textField>
+        <reportElement x="0" y="0" width="180" height="30"/>
+        <box leftPadding="5" rightPadding="5" topPadding="2" bottomPadding="2">
+          <pen lineWidth="1" lineColor="#000000"/>
+        </box>
+        <textFieldExpression><![CDATA[$F{name}]]></textFieldExpression>
+      </textField>
+    </band>
+  </detail>
+</jasperReport>`;
+    const report = parseJRXML(jrxml);
+    const el = report.bands.detail[0].elements[0];
+    if (el.type === 'textField') {
+      expect(el.box?.leftPadding).toBe(5);
+      expect(el.box?.topPen?.lineWidth).toBe(1);
+      expect(el.box?.topPen?.lineColor).toBe('#000000');
+    }
+  });
+
+  it('parses rotation and markup on textElement', () => {
+    const jrxml = `<?xml version="1.0" encoding="UTF-8"?>
+<jasperReport name="RotMarkup" pageWidth="200" pageHeight="200"
+              leftMargin="10" rightMargin="10" topMargin="10" bottomMargin="10">
+  <title>
+    <band height="50">
+      <staticText>
+        <reportElement x="0" y="0" width="180" height="20"/>
+        <textElement rotation="Left" markup="styled"/>
+        <text><![CDATA[<b>Bold</b> and <i>italic</i>]]></text>
+      </staticText>
+    </band>
+  </title>
+</jasperReport>`;
+    const report = parseJRXML(jrxml);
+    const el = report.bands.title!.elements[0];
+    if (el.type === 'staticText') {
+      expect(el.textStyle.rotation).toBe('Left');
+      expect(el.textStyle.markup).toBe('styled');
+    }
+  });
+
+  it('renders styled markup without crashing', async () => {
+    const jrxml = `<?xml version="1.0" encoding="UTF-8"?>
+<jasperReport name="StyledRender" pageWidth="200" pageHeight="200"
+              leftMargin="10" rightMargin="10" topMargin="10" bottomMargin="10">
+  <title>
+    <band height="50">
+      <staticText>
+        <reportElement x="0" y="0" width="180" height="20"/>
+        <textElement markup="styled"/>
+        <text><![CDATA[<b>Hello</b> <i>world</i>]]></text>
+      </staticText>
+    </band>
+  </title>
+</jasperReport>`;
+    const bytes = await renderJRXML(jrxml);
+    expect(bytes).toBeInstanceOf(Uint8Array);
+    expect(bytes.length).toBeGreaterThan(0);
+  });
+});
