@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+## [0.5.1] - 2026-10-07
+
+### Fixed
+- **Gaps after `fi` / `fl` / `ff` ligatures in custom fonts.** fontkit shapes
+  text with the `liga` feature on by default, substituting ligature glyphs
+  that have no Unicode code point. pdf-lib only emits `/W` widths for
+  code-point-mapped glyphs, so viewers used the 1000-unit default width and
+  rendered a visible gap after every ligature ("Konfl ikte"). Custom fonts
+  are now embedded with `liga` disabled. Opt back in (or set other OpenType
+  features) via the new `fonts.features` render option.
+
 ## [0.5.0] - 2026-04-20
 
 ### Added

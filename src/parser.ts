@@ -939,11 +939,16 @@ export class JRXMLRenderer {
     const custom = this.options.fonts;
     if (custom && custom.fontkit && custom.families) {
       (this.pdfDoc as any).registerFontkit(custom.fontkit);
+      // Ligature glyphs (fi, fl, ff, …) have no Unicode code point, so pdf-lib
+      // omits them from the font's /W width array and viewers fall back to the
+      // 1000-unit default width — a visible gap after every ligature.
+      // Disable `liga` unless the caller explicitly opts in.
+      const features = custom.features ?? { liga: false };
       for (const [family, variants] of Object.entries(custom.families)) {
         this.customFamilies.add(family.toLowerCase());
         const embed = async (suffix: string, bytes: Uint8Array | ArrayBuffer | undefined) => {
           if (!bytes) return;
-          const f = await this.pdfDoc.embedFont(bytes);
+          const f = await this.pdfDoc.embedFont(bytes, { features });
           this.fonts.set(`${family}${suffix}`, f);
         };
         await embed('', variants.normal);

@@ -120,7 +120,7 @@ If any match you are almost certainly outside of this library's supported surfac
 | Multi-page layout | ✅ auto page break + repeat `pageHeader` / `columnHeader` |
 | `<lastPageFooter>` | ✅ replaces `pageFooter` on final page |
 | `textAdjust="StretchHeight"` | ✅ element grows to fit wrapped lines |
-| Custom font embedding | ✅ via `fonts: { fontkit, families }` render option |
+| Custom font embedding | ✅ via `fonts: { fontkit, families, features? }` render option (standard ligatures off by default, see `features`) |
 | Iterable data source | ✅ via `dataSource: Row[]` render option |
 | Resource bundles `$R{key}` | ✅ via `resources` render option |
 | `<frame>` nested layout | ✅ with background, box, and child offsets |
