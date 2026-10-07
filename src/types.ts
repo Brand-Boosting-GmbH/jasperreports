@@ -33,6 +33,17 @@ export interface JRXMLRenderOptions {
     fontkit: any;
     /** Map of font family name → font variant bytes. */
     families: Record<string, CustomFontFamily>;
+    /**
+     * OpenType layout features passed to fontkit when shaping text with the
+     * custom fonts, e.g. `{ liga: true }`. Defaults to `{ liga: false }`.
+     *
+     * pdf-lib only writes glyph widths for glyphs that have a Unicode code
+     * point. Standard ligatures (`fi`, `fl`, `ff`, `ffi`, `ffl`) are
+     * substituted by the `liga` feature but usually have no code point, so
+     * PDF viewers fall back to the default width (1000 units) and render a
+     * visible gap after the ligature. Disabling `liga` avoids that.
+     */
+    features?: Record<string, boolean>;
   };
 
   /**
